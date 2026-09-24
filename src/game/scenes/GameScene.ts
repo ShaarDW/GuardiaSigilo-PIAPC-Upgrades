@@ -380,6 +380,7 @@ export class GameScene extends Phaser.Scene {
 
     this.navigationHud.setText([
       `${GUARD_STATE_LABELS[outcome.state]} ${goal}`,
+      `rutas calculadas ${outcome.routeComputations}`,
       nav,
       lastLine,
       `vision ${VISION_LABELS[vision.reason]}`,

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { emptyPerceptionMemory } from "../../src/domain/perception/memory";
-import { resolveTransition } from "../../src/domain/behavior/guardState";
+import {
+  resolveTransition,
+  VISION_LOST_GRACE_MS,
+  type GuardTransitionContext,
+} from "../../src/domain/behavior/guardState";
 
 function perception(overrides: { vision?: boolean; sound?: boolean } = {}): {
   visionVisible: boolean;
@@ -14,48 +18,94 @@ function perception(overrides: { vision?: boolean; sound?: boolean } = {}): {
   };
 }
 
+function context(overrides: Partial<GuardTransitionContext> = {}): GuardTransitionContext {
+  return {
+    arrivedAtGoal: false,
+    goalUnreachable: false,
+    timeSinceLastVisionMs: null,
+    ...overrides,
+  };
+}
+
 describe("guard state machine transitions during H4.2", () => {
   it("leaves patrol toward investigate when a sound is heard without vision", () => {
-    const result = resolveTransition("patrol", perception({ sound: true }), false, false);
+    const result = resolveTransition("patrol", perception({ sound: true }), context());
 
     expect(result).toEqual({ to: "investigate", cause: "sound-heard" });
   });
 
-  it("does not leave patrol when a sound is heard while the player is visible", () => {
-    expect(
-      resolveTransition("patrol", perception({ vision: true, sound: true }), false, false),
-    ).toBeNull();
-  });
-
   it("stays in patrol without any perception input", () => {
-    expect(resolveTransition("patrol", perception(), false, false)).toBeNull();
+    expect(resolveTransition("patrol", perception(), context())).toBeNull();
   });
 
   it("returns to patrol when reaching the target with no vision and no sound", () => {
-    const result = resolveTransition("investigate", perception(), true, false);
+    const result = resolveTransition(
+      "investigate",
+      perception(),
+      context({ arrivedAtGoal: true }),
+    );
 
     expect(result).toEqual({ to: "patrol", cause: "investigate-arrived" });
   });
 
-  it("stays in investigate when reaching the target while the player is still visible", () => {
-    expect(resolveTransition("investigate", perception({ vision: true }), true, false)).toBeNull();
-  });
-
   it("stays in investigate when reaching the target while a sound is still active", () => {
-    expect(resolveTransition("investigate", perception({ sound: true }), true, false)).toBeNull();
+    expect(
+      resolveTransition("investigate", perception({ sound: true }), context({ arrivedAtGoal: true })),
+    ).toBeNull();
   });
 
   it("returns to patrol when the investigate target is unreachable", () => {
-    const result = resolveTransition("investigate", perception(), false, true);
+    const result = resolveTransition("investigate", perception(), context({ goalUnreachable: true }));
 
     expect(result).toEqual({ to: "patrol", cause: "goal-unreachable" });
   });
 
   it("keeps the not-yet-implemented states inert", () => {
-    const perceptionInput = perception();
+    expect(resolveTransition("search", perception(), context())).toBeNull();
+    expect(resolveTransition("return", perception(), context())).toBeNull();
+  });
+});
 
-    expect(resolveTransition("pursue", perceptionInput, false, false)).toBeNull();
-    expect(resolveTransition("search", perceptionInput, false, false)).toBeNull();
-    expect(resolveTransition("return", perceptionInput, false, false)).toBeNull();
+describe("guard state machine transitions during H4.3", () => {
+  it("leaves patrol toward pursue when the player becomes visible, beating sound", () => {
+    const result = resolveTransition("patrol", perception({ vision: true, sound: true }), context());
+
+    expect(result).toEqual({ to: "pursue", cause: "vision-acquired" });
+  });
+
+  it("leaves investigate toward pursue when the player becomes visible", () => {
+    const result = resolveTransition("investigate", perception({ vision: true }), context());
+
+    expect(result).toEqual({ to: "pursue", cause: "vision-acquired" });
+  });
+
+  it("stays in pursue while the player remains visible", () => {
+    expect(
+      resolveTransition("pursue", perception({ vision: true }), context({ timeSinceLastVisionMs: 0 })),
+    ).toBeNull();
+  });
+
+  it("stays in pursue before the vision grace period elapses", () => {
+    expect(
+      resolveTransition(
+        "pursue",
+        perception(),
+        context({ timeSinceLastVisionMs: VISION_LOST_GRACE_MS - 1 }),
+      ),
+    ).toBeNull();
+  });
+
+  it("moves to investigate after the vision grace period elapses", () => {
+    const result = resolveTransition(
+      "pursue",
+      perception(),
+      context({ timeSinceLastVisionMs: VISION_LOST_GRACE_MS }),
+    );
+
+    expect(result).toEqual({ to: "investigate", cause: "vision-lost" });
+  });
+
+  it("keeps pursuing forever when no vision has ever been seen", () => {
+    expect(resolveTransition("pursue", perception(), context())).toBeNull();
   });
 });
