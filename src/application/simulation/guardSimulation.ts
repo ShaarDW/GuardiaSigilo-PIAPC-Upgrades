@@ -7,11 +7,13 @@ import {
 } from "../../domain/model/grid";
 import type { PerceptionMemory } from "../../domain/perception/memory";
 import { nextPatrolIndex, patrolPointAt } from "../../domain/behavior/patrol";
+import { buildSearchPlan } from "../../domain/behavior/searchPlan";
 import {
   resolveTransition,
   type GuardCause,
   type GuardPerceptionInput,
   type GuardState,
+  type GuardTransitionContext,
 } from "../../domain/behavior/guardState";
 import {
   appendTransition,
@@ -22,6 +24,9 @@ import {
 import { TILE_SIZE } from "./labLevel";
 
 export const REPLAN_INTERVAL_MS = 250;
+export const SEARCH_RADIUS_CELLS = 3;
+export const SEARCH_WAYPOINTS_MAX = 16;
+export const SEARCH_DURATION_MS = 5000;
 const LOG_TAIL_LIMIT = 10;
 
 export interface GuardFrameInput {
@@ -41,6 +46,8 @@ export interface GuardFrameOutput {
   readonly goalCell: GridPoint | null;
   readonly searchResult: SearchResult | null;
   readonly routeComputations: number;
+  readonly searchWaypoints: readonly GridPoint[] | null;
+  readonly planIndex: number;
   readonly log: TransitionLog;
 }
 
@@ -62,6 +69,9 @@ export interface GuardSimulation {
   lastRouteAtMs: number;
   routeComputations: number;
   stalledGoalKey: string | null;
+  searchWaypoints: readonly GridPoint[] | null;
+  planIndex: number;
+  searchStartedAtMs: number | null;
   searchResult: SearchResult | null;
   log: TransitionLog;
 }
@@ -89,6 +99,9 @@ export function createGuardSimulation(
     lastRouteAtMs: 0,
     routeComputations: 0,
     stalledGoalKey: null,
+    searchWaypoints: null,
+    planIndex: 0,
+    searchStartedAtMs: null,
     searchResult: null,
     log: createTransitionLog(LOG_TAIL_LIMIT),
   };
@@ -120,15 +133,21 @@ export function updateGuardSimulation(
     sim.lastVisionSeenAtMs = input.timeMs;
   }
 
+  const searchBudgetExceeded =
+    sim.searchStartedAtMs !== null && input.timeMs - sim.searchStartedAtMs >= SEARCH_DURATION_MS;
+
   const perception: GuardPerceptionInput = {
     visionVisible: input.visionVisible,
     soundHeard: input.soundHeard,
     memory: input.memory,
   };
-  const context = {
+  const context: GuardTransitionContext = {
     arrivedAtGoal: sim.state === "patrol" ? arrivedEdge : input.arrived,
     goalUnreachable: false,
     timeSinceLastVisionMs,
+    searchCovered: false,
+    searchBudgetExceeded,
+    searchUnfeasible: false,
   };
 
   const resolution = resolveTransition(sim.state, perception, context);
@@ -137,6 +156,11 @@ export function updateGuardSimulation(
     const target = resolution.to === "investigate" ? lastKnownCell(input.memory) : null;
     emit(sim.state, resolution.to, resolution.cause, target);
     consumedArrival = input.arrived;
+    if (sim.state === "search") {
+      sim.searchWaypoints = null;
+      sim.planIndex = 0;
+      sim.searchStartedAtMs = null;
+    }
     sim.state = resolution.to;
     sim.route = null;
   }
@@ -151,6 +175,8 @@ export function updateGuardSimulation(
     goalCell: sim.route?.goalCell ?? null,
     searchResult: sim.searchResult,
     routeComputations: sim.routeComputations,
+    searchWaypoints: sim.searchWaypoints,
+    planIndex: sim.planIndex,
     log: sim.log,
   };
 }
@@ -171,6 +197,9 @@ function routeForState(
       return;
     case "pursue":
       routePursue(sim, input, emit);
+      return;
+    case "search":
+      routeSearch(sim, input, perception, arrivedEdge, emit);
       return;
     default:
       sim.route = null;
@@ -231,12 +260,14 @@ function routeInvestigate(
     emit("investigate", "investigate", "retargeted", goal);
     return;
   }
-  const context = {
+  const recovery = resolveTransition(sim.state, perception, {
     arrivedAtGoal: false,
     goalUnreachable: true,
     timeSinceLastVisionMs: null,
-  };
-  const recovery = resolveTransition(sim.state, perception, context);
+    searchCovered: false,
+    searchBudgetExceeded: false,
+    searchUnfeasible: false,
+  });
   if (recovery && recovery.to !== sim.state) {
     emit(sim.state, recovery.to, recovery.cause, goal);
     sim.state = recovery.to;
@@ -271,6 +302,110 @@ function routePursue(sim: GuardSimulation, input: GuardFrameInput, emit: Emit): 
     return;
   }
   sim.stalledGoalKey = goalKey;
+}
+
+function routeSearch(
+  sim: GuardSimulation,
+  input: GuardFrameInput,
+  perception: GuardPerceptionInput,
+  arrivedEdge: boolean,
+  emit: Emit,
+): void {
+  if (sim.searchWaypoints === null) {
+    buildSearchPlanOnce(sim, input, perception, emit);
+    if (sim.searchWaypoints === null) {
+      return;
+    }
+  }
+
+  const previousGoal = sim.route?.goalCell ?? null;
+  if (arrivedEdge && previousGoal && sameCell(previousGoal, currentSearchWaypoint(sim))) {
+    emit("search", "search", "search-waypoint", previousGoal);
+    sim.planIndex += 1;
+    sim.route = null;
+  }
+
+  if (sim.planIndex >= sim.searchWaypoints.length) {
+    leaveSearch(sim, input, perception, emit, "searchCovered");
+    return;
+  }
+
+  const target = currentSearchWaypoint(sim);
+  if (sim.route && sameCell(sim.route.goalCell, target)) {
+    return;
+  }
+
+  const result = runSearch(sim, input, input.positionCell, target);
+  if (result.status === "success") {
+    sim.route = { goalCell: target, cells: result.path };
+    sim.routeVersion += 1;
+    return;
+  }
+  leaveSearch(sim, input, perception, emit, "searchUnfeasible");
+}
+
+function buildSearchPlanOnce(
+  sim: GuardSimulation,
+  input: GuardFrameInput,
+  perception: GuardPerceptionInput,
+  emit: Emit,
+): void {
+  const lkp = lastKnownCell(input.memory);
+  if (!lkp) {
+    leaveSearch(sim, input, perception, emit, "searchUnfeasible");
+    return;
+  }
+  const plan = buildSearchPlan(lkp, sim.map, {
+    radiusCells: SEARCH_RADIUS_CELLS,
+    waypointsMax: SEARCH_WAYPOINTS_MAX,
+  });
+  sim.searchWaypoints = plan;
+  sim.planIndex = 0;
+  if (plan.length === 0) {
+    leaveSearch(sim, input, perception, emit, "searchUnfeasible");
+    return;
+  }
+  sim.searchStartedAtMs = input.timeMs;
+  emit("search", "search", "search-started", null);
+}
+
+function leaveSearch(
+  sim: GuardSimulation,
+  input: GuardFrameInput,
+  perception: GuardPerceptionInput,
+  emit: Emit,
+  reason: "searchCovered" | "searchUnfeasible",
+): void {
+  const recovery = resolveTransition(sim.state, perception, {
+    arrivedAtGoal: false,
+    goalUnreachable: false,
+    timeSinceLastVisionMs: null,
+    searchCovered: reason === "searchCovered",
+    searchBudgetExceeded: false,
+    searchUnfeasible: reason === "searchUnfeasible",
+  });
+  if (recovery && recovery.to !== sim.state) {
+    emit(sim.state, recovery.to, recovery.cause, null);
+    sim.searchWaypoints = null;
+    sim.planIndex = 0;
+    sim.searchStartedAtMs = null;
+    sim.state = recovery.to;
+    sim.route = null;
+    routeForState(sim, input, perception, false, emit);
+  } else {
+    sim.route = null;
+  }
+}
+
+function currentSearchWaypoint(sim: GuardSimulation): GridPoint {
+  if (sim.searchWaypoints === null || sim.searchWaypoints.length === 0) {
+    throw new Error("Search plan invariant failed: no waypoint.");
+  }
+  const waypoint = sim.searchWaypoints[sim.planIndex];
+  if (!waypoint) {
+    throw new Error("Search plan invariant failed: plan index out of range.");
+  }
+  return waypoint;
 }
 
 function runSearch(

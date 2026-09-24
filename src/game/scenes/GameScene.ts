@@ -316,6 +316,22 @@ export class GameScene extends Phaser.Scene {
       graphics.lineStyle(2, 0xe5b454, 0.9);
       graphics.strokeCircle(center.x, center.y, 7);
     }
+
+    if (outcome.searchWaypoints) {
+      outcome.searchWaypoints.forEach((waypoint, index) => {
+        const center = cellCenter(waypoint, TILE_SIZE);
+        if (index === outcome.planIndex) {
+          graphics.fillStyle(0x73c991, 0.85);
+          graphics.fillRect(center.x - 5, center.y - 5, 10, 10);
+        } else if (index < outcome.planIndex) {
+          graphics.fillStyle(0x9eb4c2, 0.4);
+          graphics.fillRect(center.x - 5, center.y - 5, 10, 10);
+        } else {
+          graphics.lineStyle(1, 0x73c991, 0.9);
+          graphics.strokeRect(center.x - 5, center.y - 5, 10, 10);
+        }
+      });
+    }
   }
 
   private drawPerception(vision: VisionResult): void {
@@ -377,10 +393,14 @@ export class GameScene extends Phaser.Scene {
     const lastLine = lastEvent
       ? `ultimo ${lastEvent.cause}${lastEvent.target ? ` @(${lastEvent.target.x},${lastEvent.target.y})` : ""}`
       : "ultimo -";
+    const searchLine = outcome.searchWaypoints
+      ? `plan ${Math.min(outcome.planIndex, outcome.searchWaypoints.length)}/${outcome.searchWaypoints.length} waypoints`
+      : "plan -";
 
     this.navigationHud.setText([
       `${GUARD_STATE_LABELS[outcome.state]} ${goal}`,
       `rutas calculadas ${outcome.routeComputations}`,
+      searchLine,
       nav,
       lastLine,
       `vision ${VISION_LABELS[vision.reason]}`,

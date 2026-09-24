@@ -23,6 +23,9 @@ function context(overrides: Partial<GuardTransitionContext> = {}): GuardTransiti
     arrivedAtGoal: false,
     goalUnreachable: false,
     timeSinceLastVisionMs: null,
+    searchCovered: false,
+    searchBudgetExceeded: false,
+    searchUnfeasible: false,
     ...overrides,
   };
 }
@@ -38,14 +41,14 @@ describe("guard state machine transitions during H4.2", () => {
     expect(resolveTransition("patrol", perception(), context())).toBeNull();
   });
 
-  it("returns to patrol when reaching the target with no vision and no sound", () => {
+  it("moves to search when reaching the target with no vision and no sound", () => {
     const result = resolveTransition(
       "investigate",
       perception(),
       context({ arrivedAtGoal: true }),
     );
 
-    expect(result).toEqual({ to: "patrol", cause: "investigate-arrived" });
+    expect(result).toEqual({ to: "search", cause: "investigate-arrived" });
   });
 
   it("stays in investigate when reaching the target while a sound is still active", () => {
@@ -61,7 +64,6 @@ describe("guard state machine transitions during H4.2", () => {
   });
 
   it("keeps the not-yet-implemented states inert", () => {
-    expect(resolveTransition("search", perception(), context())).toBeNull();
     expect(resolveTransition("return", perception(), context())).toBeNull();
   });
 });
@@ -107,5 +109,39 @@ describe("guard state machine transitions during H4.3", () => {
 
   it("keeps pursuing forever when no vision has ever been seen", () => {
     expect(resolveTransition("pursue", perception(), context())).toBeNull();
+  });
+});
+
+describe("guard state machine transitions during H4.4", () => {
+  it("leaves search toward pursue immediately when the player becomes visible", () => {
+    const result = resolveTransition("search", perception({ vision: true }), context());
+
+    expect(result).toEqual({ to: "pursue", cause: "vision-acquired" });
+  });
+
+  it("leaves search toward patrol when the plan is covered", () => {
+    const result = resolveTransition("search", perception(), context({ searchCovered: true }));
+
+    expect(result).toEqual({ to: "patrol", cause: "search-exhausted" });
+  });
+
+  it("leaves search toward patrol when the budget is exhausted", () => {
+    const result = resolveTransition(
+      "search",
+      perception(),
+      context({ searchBudgetExceeded: true }),
+    );
+
+    expect(result).toEqual({ to: "patrol", cause: "search-exhausted" });
+  });
+
+  it("leaves search toward patrol when the plan is unfeasible", () => {
+    const result = resolveTransition("search", perception(), context({ searchUnfeasible: true }));
+
+    expect(result).toEqual({ to: "patrol", cause: "search-unfeasible" });
+  });
+
+  it("stays in search while the plan is still running", () => {
+    expect(resolveTransition("search", perception(), context())).toBeNull();
   });
 });

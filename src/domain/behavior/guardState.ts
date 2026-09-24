@@ -35,6 +35,9 @@ export interface GuardTransitionContext {
   readonly arrivedAtGoal: boolean;
   readonly goalUnreachable: boolean;
   readonly timeSinceLastVisionMs: number | null;
+  readonly searchCovered: boolean;
+  readonly searchBudgetExceeded: boolean;
+  readonly searchUnfeasible: boolean;
 }
 
 export interface GuardTransitionResolution {
@@ -64,7 +67,7 @@ export function resolveTransition(
       return { to: "patrol", cause: "goal-unreachable" };
     }
     if (context.arrivedAtGoal && !perception.soundHeard) {
-      return { to: "patrol", cause: "investigate-arrived" };
+      return { to: "search", cause: "investigate-arrived" };
     }
     return null;
   }
@@ -75,6 +78,18 @@ export function resolveTransition(
       && context.timeSinceLastVisionMs >= VISION_LOST_GRACE_MS
     ) {
       return { to: "investigate", cause: "vision-lost" };
+    }
+    return null;
+  }
+  if (state === "search") {
+    if (perception.visionVisible) {
+      return { to: "pursue", cause: "vision-acquired" };
+    }
+    if (context.searchUnfeasible) {
+      return { to: "patrol", cause: "search-unfeasible" };
+    }
+    if (context.searchCovered || context.searchBudgetExceeded) {
+      return { to: "patrol", cause: "search-exhausted" };
     }
     return null;
   }
