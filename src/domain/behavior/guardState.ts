@@ -86,10 +86,19 @@ export function resolveTransition(
       return { to: "pursue", cause: "vision-acquired" };
     }
     if (context.searchUnfeasible) {
-      return { to: "patrol", cause: "search-unfeasible" };
+      return { to: "return", cause: "search-unfeasible" };
     }
     if (context.searchCovered || context.searchBudgetExceeded) {
-      return { to: "patrol", cause: "search-exhausted" };
+      return { to: "return", cause: "search-exhausted" };
+    }
+    return null;
+  }
+  if (state === "return") {
+    if (perception.visionVisible) {
+      return { to: "pursue", cause: "vision-acquired" };
+    }
+    if (context.arrivedAtGoal) {
+      return { to: "patrol", cause: "returned-to-patrol" };
     }
     return null;
   }

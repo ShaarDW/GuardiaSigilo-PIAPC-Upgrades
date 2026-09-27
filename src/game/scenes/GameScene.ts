@@ -332,6 +332,19 @@ export class GameScene extends Phaser.Scene {
         }
       });
     }
+
+    if (outcome.returnCandidates) {
+      outcome.returnCandidates.forEach((candidate, index) => {
+        const center = cellCenter(candidate, TILE_SIZE);
+        if (index === outcome.candidateIndex) {
+          graphics.fillStyle(0xe5a439, 0.85);
+          graphics.fillCircle(center.x, center.y, 5);
+        } else {
+          graphics.lineStyle(1, 0xe5a439, 0.9);
+          graphics.strokeCircle(center.x, center.y, 5);
+        }
+      });
+    }
   }
 
   private drawPerception(vision: VisionResult): void {
@@ -396,11 +409,15 @@ export class GameScene extends Phaser.Scene {
     const searchLine = outcome.searchWaypoints
       ? `plan ${Math.min(outcome.planIndex, outcome.searchWaypoints.length)}/${outcome.searchWaypoints.length} waypoints`
       : "plan -";
+    const returnLine = outcome.returnCandidates
+      ? `retorno incidencia ${Math.min(outcome.candidateIndex + 1, outcome.returnCandidates.length)}/${outcome.returnCandidates.length}`
+      : "retorno -";
 
     this.navigationHud.setText([
       `${GUARD_STATE_LABELS[outcome.state]} ${goal}`,
       `rutas calculadas ${outcome.routeComputations}`,
       searchLine,
+      returnLine,
       nav,
       lastLine,
       `vision ${VISION_LABELS[vision.reason]}`,

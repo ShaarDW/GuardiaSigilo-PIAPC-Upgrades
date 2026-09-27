@@ -119,29 +119,53 @@ describe("guard state machine transitions during H4.4", () => {
     expect(result).toEqual({ to: "pursue", cause: "vision-acquired" });
   });
 
-  it("leaves search toward patrol when the plan is covered", () => {
+  it("leaves search toward return when the plan is covered", () => {
     const result = resolveTransition("search", perception(), context({ searchCovered: true }));
 
-    expect(result).toEqual({ to: "patrol", cause: "search-exhausted" });
+    expect(result).toEqual({ to: "return", cause: "search-exhausted" });
   });
 
-  it("leaves search toward patrol when the budget is exhausted", () => {
+  it("leaves search toward return when the budget is exhausted", () => {
     const result = resolveTransition(
       "search",
       perception(),
       context({ searchBudgetExceeded: true }),
     );
 
-    expect(result).toEqual({ to: "patrol", cause: "search-exhausted" });
+    expect(result).toEqual({ to: "return", cause: "search-exhausted" });
   });
 
-  it("leaves search toward patrol when the plan is unfeasible", () => {
+  it("leaves search toward return when the plan is unfeasible", () => {
     const result = resolveTransition("search", perception(), context({ searchUnfeasible: true }));
 
-    expect(result).toEqual({ to: "patrol", cause: "search-unfeasible" });
+    expect(result).toEqual({ to: "return", cause: "search-unfeasible" });
   });
 
   it("stays in search while the plan is still running", () => {
     expect(resolveTransition("search", perception(), context())).toBeNull();
+  });
+});
+
+describe("guard state machine transitions during H4.5", () => {
+  it("commits to return: sound does not interrupt it", () => {
+    expect(resolveTransition("return", perception({ sound: true }), context())).toBeNull();
+  });
+
+  it("resumes patrol when arriving at the chosen patrol point", () => {
+    const result = resolveTransition("return", perception(), context({ arrivedAtGoal: true }));
+
+    expect(result).toEqual({ to: "patrol", cause: "returned-to-patrol" });
+  });
+
+  it("keeps returning while the candidate is still out of reach", () => {
+    const result = resolveTransition("return", perception(), context({ arrivedAtGoal: false }));
+
+    expect(result).toBeNull();
+  });
+
+  it("leaves return toward pursue when the player becomes visible", () => {
+    const result = resolveTransition("return", perception({ vision: true }), context());
+
+    expect(result).toEqual({ to: "pursue", cause: "vision-acquired" });
   });
 });

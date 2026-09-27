@@ -1,4 +1,5 @@
 import { findPathAStar, type SearchResult } from "../../domain/navigation/search";
+import { manhattanDistance } from "../../domain/navigation/gridGraph";
 import {
   cellKey,
   worldToCell,
@@ -48,6 +49,8 @@ export interface GuardFrameOutput {
   readonly routeComputations: number;
   readonly searchWaypoints: readonly GridPoint[] | null;
   readonly planIndex: number;
+  readonly returnCandidates: readonly GridPoint[] | null;
+  readonly candidateIndex: number;
   readonly log: TransitionLog;
 }
 
@@ -72,6 +75,8 @@ export interface GuardSimulation {
   searchWaypoints: readonly GridPoint[] | null;
   planIndex: number;
   searchStartedAtMs: number | null;
+  returnCandidates: readonly GridPoint[] | null;
+  candidateIndex: number;
   searchResult: SearchResult | null;
   log: TransitionLog;
 }
@@ -102,6 +107,8 @@ export function createGuardSimulation(
     searchWaypoints: null,
     planIndex: 0,
     searchStartedAtMs: null,
+    returnCandidates: null,
+    candidateIndex: 0,
     searchResult: null,
     log: createTransitionLog(LOG_TAIL_LIMIT),
   };
@@ -141,8 +148,10 @@ export function updateGuardSimulation(
     soundHeard: input.soundHeard,
     memory: input.memory,
   };
+  const arrivalSignal =
+    sim.state === "return" ? input.arrived && sim.route !== null : input.arrived;
   const context: GuardTransitionContext = {
-    arrivedAtGoal: sim.state === "patrol" ? arrivedEdge : input.arrived,
+    arrivedAtGoal: sim.state === "patrol" ? arrivedEdge : arrivalSignal,
     goalUnreachable: false,
     timeSinceLastVisionMs,
     searchCovered: false,
@@ -161,6 +170,14 @@ export function updateGuardSimulation(
       sim.planIndex = 0;
       sim.searchStartedAtMs = null;
     }
+    if (sim.state === "return") {
+      if (resolution.to === "patrol") {
+        resumePatrolAfterReturn(sim);
+      }
+      sim.returnCandidates = null;
+      sim.candidateIndex = 0;
+    }
+    sim.stalledGoalKey = null;
     sim.state = resolution.to;
     sim.route = null;
   }
@@ -177,6 +194,8 @@ export function updateGuardSimulation(
     routeComputations: sim.routeComputations,
     searchWaypoints: sim.searchWaypoints,
     planIndex: sim.planIndex,
+    returnCandidates: sim.returnCandidates,
+    candidateIndex: sim.candidateIndex,
     log: sim.log,
   };
 }
@@ -200,6 +219,9 @@ function routeForState(
       return;
     case "search":
       routeSearch(sim, input, perception, arrivedEdge, emit);
+      return;
+    case "return":
+      routeReturn(sim, input, emit);
       return;
     default:
       sim.route = null;
@@ -389,12 +411,101 @@ function leaveSearch(
     sim.searchWaypoints = null;
     sim.planIndex = 0;
     sim.searchStartedAtMs = null;
+    sim.stalledGoalKey = null;
     sim.state = recovery.to;
     sim.route = null;
     routeForState(sim, input, perception, false, emit);
   } else {
     sim.route = null;
   }
+}
+
+function routeReturn(sim: GuardSimulation, input: GuardFrameInput, emit: Emit): void {
+  if (sim.returnCandidates === null) {
+    sim.returnCandidates = orderedReturnCandidates(sim, input.positionCell);
+    sim.candidateIndex = 0;
+    emit("return", "return", "return-started", firstReturnCandidate(sim));
+  }
+
+  for (; ;) {
+    if (sim.candidateIndex >= sim.returnCandidates.length) {
+      sim.route = null;
+      return;
+    }
+    const target = currentReturnCandidate(sim);
+    if (sim.route && sameCell(sim.route.goalCell, target)) {
+      return;
+    }
+    const targetKey = cellKey(target);
+    if (stalledForGoal(sim, targetKey)) {
+      sim.route = null;
+      return;
+    }
+    const result = runSearch(sim, input, input.positionCell, target);
+    if (result.status === "success") {
+      sim.route = { goalCell: target, cells: result.path };
+      sim.routeVersion += 1;
+      sim.stalledGoalKey = null;
+      return;
+    }
+    emit("return", "return", "alternate-patrol-point", target);
+    sim.candidateIndex += 1;
+    if (sim.candidateIndex >= sim.returnCandidates.length) {
+      sim.stalledGoalKey = targetKey;
+      sim.route = null;
+      return;
+    }
+  }
+}
+
+function orderedReturnCandidates(
+  sim: GuardSimulation,
+  fromCell: GridPoint,
+): readonly GridPoint[] {
+  const ranked = sim.patrolPoints.map((point, index) => ({ point, index }));
+  ranked.sort((left, right) => {
+    const leftDistance = manhattanDistance(fromCell, left.point);
+    const rightDistance = manhattanDistance(fromCell, right.point);
+    if (leftDistance !== rightDistance) {
+      return leftDistance - rightDistance;
+    }
+    return left.index - right.index;
+  });
+  return ranked.map((entry) => entry.point);
+}
+
+function firstReturnCandidate(sim: GuardSimulation): GridPoint {
+  if (sim.returnCandidates === null || sim.returnCandidates.length === 0) {
+    throw new Error("Return candidates invariant failed: no candidate.");
+  }
+  const candidate = sim.returnCandidates[0];
+  if (!candidate) {
+    throw new Error("Return candidates invariant failed: missing first candidate.");
+  }
+  return candidate;
+}
+
+function currentReturnCandidate(sim: GuardSimulation): GridPoint {
+  if (sim.returnCandidates === null || sim.returnCandidates.length === 0) {
+    throw new Error("Return candidates invariant failed: no candidate.");
+  }
+  const candidate = sim.returnCandidates[sim.candidateIndex];
+  if (!candidate) {
+    throw new Error("Return candidates invariant failed: candidate index out of range.");
+  }
+  return candidate;
+}
+
+function resumePatrolAfterReturn(sim: GuardSimulation): void {
+  const reached = sim.route?.goalCell ?? null;
+  if (!reached) {
+    return;
+  }
+  const reachedIndex = sim.patrolPoints.findIndex((point) => sameCell(point, reached));
+  if (reachedIndex === -1) {
+    return;
+  }
+  sim.patrolIndex = nextPatrolIndex(sim.patrolPoints.length, reachedIndex);
 }
 
 function currentSearchWaypoint(sim: GuardSimulation): GridPoint {

@@ -401,7 +401,7 @@ describe("guard simulation during H4.4 (search)", () => {
     expect(secondWaypoint.searchWaypoints?.length).toBe(4);
   });
 
-  it("ends the search when the plan is fully covered", () => {
+  it("ends the search and returns toward the nearest patrol point when the plan is fully covered", () => {
     const sim = createGuardSimulation(crossMap(), [{ x: 1, y: 2 }], { x: 2, y: 2 });
     const memory = soundMemoryAt({ x: 2, y: 2 });
     updateGuardSimulation(
@@ -426,13 +426,15 @@ describe("guard simulation during H4.4 (search)", () => {
     );
 
     expect(covered.state).toBe("search");
-    expect(final.state).toBe("patrol");
+    expect(final.state).toBe("return");
     expect(final.events.map((event) => event.cause)).toEqual([
       "search-waypoint",
       "search-exhausted",
-      "route-replanned",
+      "return-started",
     ]);
     expect(final.goalCell).toEqual({ x: 1, y: 2 });
+    expect(final.returnCandidates).toEqual([{ x: 1, y: 2 }]);
+    expect(final.candidateIndex).toBe(0);
     expect(memory.lastKnownPosition).toEqual({ x: 80, y: 80 });
   });
 
@@ -456,10 +458,10 @@ describe("guard simulation during H4.4 (search)", () => {
       frame({ timeMs: 5000, positionCell: { x: 2, y: 2 }, memory }),
     );
 
-    expect(exhausted.state).toBe("patrol");
+    expect(exhausted.state).toBe("return");
     expect(exhausted.events.map((event) => event.cause)).toEqual([
       "search-exhausted",
-      "route-replanned",
+      "return-started",
     ]);
   });
 
@@ -483,7 +485,7 @@ describe("guard simulation during H4.4 (search)", () => {
     expect(seen.events.map((event) => event.cause)).toEqual(["vision-acquired", "route-replanned"]);
   });
 
-  it("leaves search toward patrol when the plan is unfeasible", () => {
+  it("leaves search toward return when the plan is unfeasible", () => {
     const isolatedMap = createGridMap(1, 1, []);
     const sim = createGuardSimulation(isolatedMap, [{ x: 0, y: 0 }], { x: 0, y: 0 });
     const memory = soundMemoryAt({ x: 0, y: 0 });
@@ -497,12 +499,13 @@ describe("guard simulation during H4.4 (search)", () => {
       frame({ timeMs: 16, positionCell: { x: 0, y: 0 }, arrived: true, memory }),
     );
 
-    expect(unfeasible.state).toBe("patrol");
+    expect(unfeasible.state).toBe("return");
     expect(unfeasible.events.map((event) => event.cause)).toEqual([
       "investigate-arrived",
       "search-unfeasible",
-      "route-replanned",
+      "return-started",
     ]);
+    expect(unfeasible.goalCell).toEqual({ x: 0, y: 0 });
   });
 
   it("runs the full H4.1–H4.4 cycle on the lab map", () => {
@@ -537,5 +540,96 @@ describe("guard simulation during H4.4 (search)", () => {
       "vision-acquired",
       "route-replanned",
     ]);
+  });
+});
+
+describe("guard simulation during H4.5 (return)", () => {
+  it("resumes the patrol cycle after returning to the nearest patrol point", () => {
+    const sim = createGuardSimulation(crossMap(), [{ x: 3, y: 2 }, { x: 1, y: 2 }], { x: 2, y: 2 });
+    const memory = soundMemoryAt({ x: 2, y: 2 });
+    updateGuardSimulation(
+      sim,
+      frame({ timeMs: 0, positionCell: { x: 2, y: 2 }, soundHeard: true, memory }),
+    );
+    updateGuardSimulation(sim, frame({ timeMs: 16, positionCell: { x: 2, y: 2 }, arrived: true, memory }));
+    updateGuardSimulation(sim, frame({ timeMs: 32, positionCell: { x: 2, y: 2 } }));
+    updateGuardSimulation(sim, frame({ timeMs: 48, positionCell: { x: 1, y: 2 }, arrived: true, memory }));
+    updateGuardSimulation(sim, frame({ timeMs: 64, positionCell: { x: 1, y: 2 } }));
+    updateGuardSimulation(sim, frame({ timeMs: 80, positionCell: { x: 2, y: 1 }, arrived: true, memory }));
+    updateGuardSimulation(sim, frame({ timeMs: 96, positionCell: { x: 2, y: 1 } }));
+    updateGuardSimulation(sim, frame({ timeMs: 112, positionCell: { x: 2, y: 3 }, arrived: true, memory }));
+    updateGuardSimulation(sim, frame({ timeMs: 128, positionCell: { x: 2, y: 3 } }));
+
+    const entering = updateGuardSimulation(
+      sim,
+      frame({ timeMs: 144, positionCell: { x: 3, y: 2 }, arrived: true, memory }),
+    );
+    expect(entering.state).toBe("return");
+    expect(entering.goalCell).toEqual({ x: 3, y: 2 });
+
+    const resumed = updateGuardSimulation(
+      sim,
+      frame({ timeMs: 160, positionCell: { x: 3, y: 2 }, arrived: true, memory }),
+    );
+
+    expect(resumed.state).toBe("patrol");
+    expect(resumed.events.map((event) => event.cause)).toEqual([
+      "returned-to-patrol",
+      "route-replanned",
+    ]);
+    expect(resumed.goalCell).toEqual({ x: 1, y: 2 });
+  });
+
+  it("skips an unreachable patrol point and alternates to the next candidate", () => {
+    const map = createGridMap(6, 6, [{ x: 1, y: 0 }, { x: 0, y: 1 }]);
+    const sim = createGuardSimulation(map, [{ x: 0, y: 0 }, { x: 5, y: 5 }], { x: 0, y: 2 });
+    const memory = soundMemoryAt({ x: 0, y: 2 });
+    updateGuardSimulation(
+      sim,
+      frame({ timeMs: 0, positionCell: { x: 0, y: 2 }, soundHeard: true, memory }),
+    );
+    updateGuardSimulation(sim, frame({ timeMs: 16, positionCell: { x: 0, y: 2 }, arrived: true, memory }));
+
+    const alternated = updateGuardSimulation(
+      sim,
+      frame({ timeMs: 5016, positionCell: { x: 0, y: 2 }, memory }),
+    );
+
+    expect(alternated.state).toBe("return");
+    expect(alternated.events.map((event) => event.cause)).toEqual([
+      "search-exhausted",
+      "return-started",
+      "alternate-patrol-point",
+    ]);
+    expect(alternated.returnCandidates).toEqual([{ x: 0, y: 0 }, { x: 5, y: 5 }]);
+    expect(alternated.candidateIndex).toBe(1);
+    expect(alternated.goalCell).toEqual({ x: 5, y: 5 });
+  });
+
+  it("breaks out of the return toward pursue when the player becomes visible", () => {
+    const sim = createGuardSimulation(crossMap(), [{ x: 1, y: 2 }], { x: 2, y: 2 });
+    const memory = soundMemoryAt({ x: 2, y: 2 });
+    updateGuardSimulation(
+      sim,
+      frame({ timeMs: 0, positionCell: { x: 2, y: 2 }, soundHeard: true, memory }),
+    );
+    updateGuardSimulation(sim, frame({ timeMs: 16, positionCell: { x: 2, y: 2 }, arrived: true, memory }));
+
+    const returning = updateGuardSimulation(
+      sim,
+      frame({ timeMs: 5016, positionCell: { x: 2, y: 2 }, memory }),
+    );
+    expect(returning.state).toBe("return");
+
+    const seen = updateGuardSimulation(
+      sim,
+      frame({ timeMs: 5032, positionCell: { x: 2, y: 2 }, visionVisible: true, memory: visionMemoryAt({ x: 3, y: 2 }) }),
+    );
+
+    expect(seen.state).toBe("pursue");
+    expect(seen.returnCandidates).toBeNull();
+    expect(seen.candidateIndex).toBe(0);
+    expect(seen.goalCell).toEqual({ x: 3, y: 2 });
+    expect(seen.events.map((event) => event.cause)).toEqual(["vision-acquired", "route-replanned"]);
   });
 });
