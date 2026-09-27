@@ -4,7 +4,7 @@ titulo: Hitos del laboratorio Guardia de Sigilo
 tipo: referencia
 audiencia: estudiante
 acceso: publico
-version: 3
+version: 4
 ---
 
 # Hitos del laboratorio
@@ -15,9 +15,10 @@ version: 3
 | H1. Repositorio preparado para agentes | Completado |
 | H2. Navegación | Completado |
 | H3. Percepción y movimiento | Completado |
-| H4. Máquina de estados | Pendiente |
-| H5. Comparación | Pendiente |
-| H6. Integración final | Pendiente |
+| H4. Máquina de estados | Completado |
+| H5. Comparación | Completado |
+| H6. Integración final | Completado |
+| U1. Patrulla con pausas y mirada direccional | Completado |
 
 ## H0. Base reproducible
 
@@ -90,6 +91,8 @@ version: 3
 - Decisión justificada sobre la técnica implementada.
 - Prueba de juego centrada en legibilidad y justicia.
 
+Evidencia H5: `docs/h5-comparacion-maquina-estados.md` (diagrama de la FSM real, trace representativo sobre el mapa del laboratorio, tabla comparativa y justificación que distingue hechos de inferencias) y `docs/evidencias/h5-validacion.md`.
+
 ## H6. Integración final
 
 - Validación completa.
@@ -97,5 +100,16 @@ version: 3
 - Trazabilidad del uso de agentes.
 - Revisión de seguridad y licencias.
 - Producto ejecutable e informe.
+
+Evidencia H6: `docs/evidencias/h6-integracion.md` (línea de reconstrucción, validación final, escenarios integrados, auditoría documentación ↔ código y revisión de riesgos).
+
+## U1. Patrulla con pausas y mirada direccional
+
+- Pausa determinista de `PATROL_PAUSE_MS` (700 ms) tras llegar a un punto de patrulla.
+- Barrido de mirada de 360° durante la pausa (comienza y termina mirando al siguiente punto); el cono de visión sigue la mirada.
+- Una observación válida de la IA interrumpe la pausa según las reglas FSM existentes.
+- Sin cambios de FSM, percepción, memoria, navegación, mapa ni puntos de patrulla.
+
+Evidencia U1: `docs/u1-patrulla-pausas-espec.md` (especificación) y `docs/evidencias/u1-validacion.md` (validación y revisión del diff).
 
 Cada hito debe poder validarse de forma independiente. No se avanza ocultando fallos del anterior.

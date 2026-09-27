@@ -25,6 +25,7 @@ import {
 import { TILE_SIZE } from "./labLevel";
 
 export const REPLAN_INTERVAL_MS = 250;
+export const PATROL_PAUSE_MS = 700;
 export const SEARCH_RADIUS_CELLS = 3;
 export const SEARCH_WAYPOINTS_MAX = 16;
 export const SEARCH_DURATION_MS = 5000;
@@ -51,6 +52,8 @@ export interface GuardFrameOutput {
   readonly planIndex: number;
   readonly returnCandidates: readonly GridPoint[] | null;
   readonly candidateIndex: number;
+  readonly patrolPaused: boolean;
+  readonly patrolGazeCell: GridPoint | null;
   readonly log: TransitionLog;
 }
 
@@ -77,16 +80,23 @@ export interface GuardSimulation {
   searchStartedAtMs: number | null;
   returnCandidates: readonly GridPoint[] | null;
   candidateIndex: number;
+  patrolPauseMs: number;
+  patrolPauseStartedAtMs: number | null;
   searchResult: SearchResult | null;
   log: TransitionLog;
 }
 
 type Emit = (from: GuardState, to: GuardState, cause: GuardCause, target: GridPoint | null) => void;
 
+export interface GuardSimulationOptions {
+  readonly patrolPauseMs?: number;
+}
+
 export function createGuardSimulation(
   map: GridMap,
   patrolPoints: readonly GridPoint[],
   startCell: GridPoint,
+  options: GuardSimulationOptions = {},
 ): GuardSimulation {
   if (patrolPoints.length === 0) {
     throw new Error("Patrol points must not be empty.");
@@ -109,6 +119,8 @@ export function createGuardSimulation(
     searchStartedAtMs: null,
     returnCandidates: null,
     candidateIndex: 0,
+    patrolPauseMs: options.patrolPauseMs ?? 0,
+    patrolPauseStartedAtMs: null,
     searchResult: null,
     log: createTransitionLog(LOG_TAIL_LIMIT),
   };
@@ -178,11 +190,14 @@ export function updateGuardSimulation(
       sim.candidateIndex = 0;
     }
     sim.stalledGoalKey = null;
+    sim.patrolPauseStartedAtMs = null;
     sim.state = resolution.to;
     sim.route = null;
   }
 
   routeForState(sim, input, perception, consumedArrival ? false : arrivedEdge, emit);
+
+  const patrolPaused = sim.state === "patrol" && sim.patrolPauseStartedAtMs !== null;
 
   return {
     state: sim.state,
@@ -196,6 +211,8 @@ export function updateGuardSimulation(
     planIndex: sim.planIndex,
     returnCandidates: sim.returnCandidates,
     candidateIndex: sim.candidateIndex,
+    patrolPaused,
+    patrolGazeCell: patrolPaused ? currentPatrolGoal(sim) : null,
     log: sim.log,
   };
 }
@@ -234,10 +251,23 @@ function routePatrol(
   arrivedEdge: boolean,
   emit: Emit,
 ): void {
+  if (sim.patrolPauseStartedAtMs !== null) {
+    if (input.timeMs - sim.patrolPauseStartedAtMs >= sim.patrolPauseMs) {
+      sim.patrolPauseStartedAtMs = null;
+      attemptPatrolRoute(sim, input, emit);
+    }
+    return;
+  }
+
   if (arrivedEdge) {
     emit("patrol", "patrol", "arrived", sim.route?.goalCell ?? null);
     sim.patrolIndex = nextPatrolIndex(sim.patrolPoints.length, sim.patrolIndex);
     emit("patrol", "patrol", "patrol-point-selected", currentPatrolGoal(sim));
+    if (sim.patrolPauseMs > 0) {
+      sim.patrolPauseStartedAtMs = input.timeMs;
+      sim.route = null;
+      return;
+    }
     attemptPatrolRoute(sim, input, emit);
   } else if (!sim.route || !sameCell(currentPatrolGoal(sim), sim.route.goalCell)) {
     attemptPatrolRoute(sim, input, emit);

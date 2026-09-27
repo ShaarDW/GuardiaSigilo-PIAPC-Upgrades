@@ -93,13 +93,17 @@ Salida: nueva posición, índice siguiente, finalización y dirección del últi
 
 ### Comportamiento
 
-Entrada: estado actual, observaciones, memoria de trabajo y tiempo.
+Entrada: estado actual, observaciones, memoria de trabajo y contexto de transición.
 
-Salida: transición y acción deseada.
+Salida: transición y causa.
+
+La decisión es una máquina de estados de dominio puro: `src/domain/behavior/guardState.ts` exporta `resolveTransition(state, perception, context)`, una función pura sin Phaser ni navegador. Estados reales: `patrol`, `investigate`, `pursue`, `search` y `return`. La prioridad visión > sonido se codifica por orden de evaluación (visión primero en cada estado). `src/application/simulation/guardSimulation.ts` coordina la FSM con la navegación A*, el plan de búsqueda finito (`SEARCH_RADIUS_CELLS`, `SEARCH_WAYPOINTS_MAX`, `SEARCH_DURATION_MS`), el intervalo de replanificación (`REPLAN_INTERVAL_MS`) y el retorno ordenado a puntos de patrulla; Phaser sólo presenta el resultado.
+
+El ritmo de patrulla es una coordinación de presentación, no un estado de la FSM: tras llegar a un punto de patrulla el guardia se detiene durante `PATROL_PAUSE_MS` (700 ms, configurable mediante `createGuardSimulation(map, patrolPoints, start, { patrolPauseMs })`; default 0 conserva el comportamiento H4) antes de continuar el siguiente tramo. La pausa es temporal (`timeMs` acumulado, sin timers ni FPS) y la resolución de transiciones corre antes, por lo que una observación válida la interrumpe. La salida `GuardFrameOutput` expone `patrolPaused` y `patrolGazeCell` (siguiente punto de patrulla) y la escena hace barrer la mirada del guardia 360° durante la pausa (el cono de visión existente sigue la mirada y puede detectar durante el barrido), reanudando la marcha hacia ese punto.
 
 ### Telemetría
 
-Eventos estructurados con tiempo, estado anterior, evento, estado nuevo y causa.
+Eventos estructurados con tiempo, estado anterior, estado nuevo, causa y destino: `src/domain/telemetry/transitionLog.ts` define `TransitionEvent { timeMs, from, to, cause, target }` y conserva una cola de 10 eventos. Las causas cubren patrulla, investigación, persecución, búsqueda y retorno (por ejemplo, `vision-acquired`, `vision-lost`, `search-exhausted`, `return-started`, `returned-to-patrol`, `alternate-patrol-point`).
 
 ## Comandos objetivo
 

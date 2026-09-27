@@ -16,6 +16,7 @@ import {
 } from "../../application/simulation/perceptionSimulation";
 import {
   createGuardSimulation,
+  PATROL_PAUSE_MS,
   updateGuardSimulation,
   type GuardFrameOutput,
   type GuardSimulation,
@@ -31,6 +32,7 @@ const PLAYER_SPEED = 190;
 const GUARD_SPEED = 115;
 const VISION_RANGE = 220;
 const FIELD_OF_VIEW = Math.PI / 2;
+const PATROL_GAZE_SWEEP_RADIANS = Math.PI * 2;
 const SOUND_RADIUS = 190;
 const SOUND_DURATION_MS = 800;
 const GUARD_STATE_LABELS: Readonly<Record<GuardState, string>> = {
@@ -70,6 +72,8 @@ export class GameScene extends Phaser.Scene {
   private nextWaypoint = 0;
   private appliedRouteVersion = 0;
   private guardArrived = false;
+  private patrolPauseStartedAtMs: number | null = null;
+  private patrolPauseBaseAngle = 0;
   private telemetryVisible = false;
   private perceptionState: PerceptionSimulationState = initialPerceptionState();
   private guardSession!: GuardSimulation;
@@ -84,9 +88,13 @@ export class GameScene extends Phaser.Scene {
     this.nextWaypoint = 0;
     this.appliedRouteVersion = 0;
     this.guardArrived = false;
+    this.patrolPauseStartedAtMs = null;
+    this.patrolPauseBaseAngle = 0;
     this.telemetryVisible = false;
     this.perceptionState = initialPerceptionState();
-    this.guardSession = createGuardSimulation(LAB_MAP, PATROL_POINTS, GUARD_START);
+    this.guardSession = createGuardSimulation(LAB_MAP, PATROL_POINTS, GUARD_START, {
+      patrolPauseMs: PATROL_PAUSE_MS,
+    });
     this.cameras.main.setBackgroundColor("#10161c");
     this.drawGrid();
 
@@ -207,6 +215,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private stepGuard(time: number, delta: number): void {
+    this.applyPatrolGazeSweep(time);
     const observer = { x: this.guard.x, y: this.guard.y };
     const target = { x: this.player.x, y: this.player.y };
     const frame = updatePerceptionSimulation(this.perceptionState, {
@@ -255,9 +264,40 @@ export class GameScene extends Phaser.Scene {
       this.guardArrived = false;
     }
 
+    this.trackPatrolPause(outcome, time);
+
     this.drawNavigation(outcome);
     this.drawPerception(frame.vision);
     this.updateTelemetry(time, frame.vision, frame.soundHeard, outcome);
+  }
+
+  private applyPatrolGazeSweep(time: number): void {
+    const startedAt = this.patrolPauseStartedAtMs;
+    if (startedAt === null) {
+      return;
+    }
+    const elapsed = Math.min(Math.max(time - startedAt, 0), PATROL_PAUSE_MS);
+    const progress = elapsed / PATROL_PAUSE_MS;
+    const angle = this.patrolPauseBaseAngle + progress * PATROL_GAZE_SWEEP_RADIANS;
+    this.guardFacing = { x: Math.cos(angle), y: Math.sin(angle) };
+  }
+
+  private trackPatrolPause(outcome: GuardFrameOutput, time: number): void {
+    if (!outcome.patrolPaused) {
+      this.patrolPauseStartedAtMs = null;
+      return;
+    }
+    if (this.patrolPauseStartedAtMs !== null) {
+      return;
+    }
+    this.patrolPauseStartedAtMs = time;
+    const gaze = outcome.patrolGazeCell;
+    if (gaze) {
+      const target = cellCenter(gaze, TILE_SIZE);
+      this.patrolPauseBaseAngle = Math.atan2(target.y - this.guard.y, target.x - this.guard.x);
+    } else {
+      this.patrolPauseBaseAngle = 0;
+    }
   }
 
   private drawGrid(): void {

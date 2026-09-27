@@ -6,6 +6,7 @@ import {
 } from "../../src/domain/perception/memory";
 import {
   createGuardSimulation,
+  PATROL_PAUSE_MS,
   updateGuardSimulation,
   type GuardFrameInput,
 } from "../../src/application/simulation/guardSimulation";
@@ -631,5 +632,198 @@ describe("guard simulation during H4.5 (return)", () => {
     expect(seen.candidateIndex).toBe(0);
     expect(seen.goalCell).toEqual({ x: 3, y: 2 });
     expect(seen.events.map((event) => event.cause)).toEqual(["vision-acquired", "route-replanned"]);
+  });
+});
+
+describe("guard simulation representative H4 trace (H5)", () => {
+  it("runs PATROL -> INVESTIGATE -> PURSUE -> INVESTIGATE -> SEARCH -> RETURN -> PATROL", () => {
+    const sim = createGuardSimulation(LAB_MAP, PATROL_POINTS, GUARD_START);
+    const causes: string[] = [];
+    const capture = (outcome: ReturnType<typeof updateGuardSimulation>): void => {
+      causes.push(...outcome.events.map((event) => event.cause));
+    };
+
+    capture(updateGuardSimulation(sim, frame({ timeMs: 0 })));
+    capture(updateGuardSimulation(
+      sim,
+      frame({ timeMs: 100, soundHeard: true, memory: soundMemoryAt({ x: 6, y: 17 }) }),
+    ));
+    capture(updateGuardSimulation(
+      sim,
+      frame({ timeMs: 200, positionCell: { x: 6, y: 17 }, arrived: true, memory: soundMemoryAt({ x: 6, y: 17 }) }),
+    ));
+    capture(updateGuardSimulation(
+      sim,
+      frame({ timeMs: 300, positionCell: { x: 6, y: 17 }, visionVisible: true, memory: visionMemoryAt({ x: 20, y: 18 }) }),
+    ));
+    capture(updateGuardSimulation(
+      sim,
+      frame({ timeMs: 500, positionCell: { x: 20, y: 18 }, memory: visionMemoryAt({ x: 20, y: 18 }) }),
+    ));
+    capture(updateGuardSimulation(
+      sim,
+      frame({ timeMs: 600, positionCell: { x: 20, y: 18 }, arrived: true, memory: visionMemoryAt({ x: 20, y: 18 }) }),
+    ));
+    capture(updateGuardSimulation(
+      sim,
+      frame({ timeMs: 5600, positionCell: { x: 20, y: 18 }, memory: visionMemoryAt({ x: 20, y: 18 }) }),
+    ));
+    capture(updateGuardSimulation(
+      sim,
+      frame({ timeMs: 5800, positionCell: { x: 27, y: 17 }, arrived: true, memory: visionMemoryAt({ x: 20, y: 18 }) }),
+    ));
+
+    expect(sim.state).toBe("patrol");
+    expect(causes).toEqual([
+      "patrol-started",
+      "route-replanned",
+      "sound-heard",
+      "retargeted",
+      "investigate-arrived",
+      "search-started",
+      "vision-acquired",
+      "route-replanned",
+      "vision-lost",
+      "retargeted",
+      "investigate-arrived",
+      "search-started",
+      "search-exhausted",
+      "return-started",
+      "returned-to-patrol",
+      "route-replanned",
+    ]);
+  });
+});
+
+describe("guard patrol pause during Upgrade 1", () => {
+  function pausedSimulation(): ReturnType<typeof createGuardSimulation> {
+    return createGuardSimulation(LAB_MAP, PATROL_POINTS, GUARD_START, {
+      patrolPauseMs: PATROL_PAUSE_MS,
+    });
+  }
+
+  it("starts the pause on arrival without advancing to the next leg", () => {
+    const sim = pausedSimulation();
+    updateGuardSimulation(sim, frame({ timeMs: 0 }));
+    const arrival = updateGuardSimulation(sim, frame({ timeMs: 16, arrived: true }));
+
+    expect(arrival.events.map((event) => event.cause)).toEqual([
+      "arrived",
+      "patrol-point-selected",
+    ]);
+    expect(arrival.routeCells).toBeNull();
+    expect(arrival.goalCell).toBeNull();
+    expect(arrival.patrolPaused).toBe(true);
+    expect(arrival.patrolGazeCell).toEqual({ x: 2, y: 4 });
+  });
+
+  it("stays paused while the elapsed time is below the configured duration", () => {
+    const sim = pausedSimulation();
+    updateGuardSimulation(sim, frame({ timeMs: 0 }));
+    updateGuardSimulation(sim, frame({ timeMs: 16, arrived: true }));
+
+    const within = updateGuardSimulation(
+      sim,
+      frame({ timeMs: 16 + PATROL_PAUSE_MS - 1, arrived: true }),
+    );
+
+    expect(within.patrolPaused).toBe(true);
+    expect(within.events).toEqual([]);
+    expect(within.routeCells).toBeNull();
+    expect(within.goalCell).toBeNull();
+    expect(within.routeVersion).toBe(1);
+  });
+
+  it("ends the pause, resumes the next leg and preserves the patrol cycle", () => {
+    const sim = pausedSimulation();
+    updateGuardSimulation(sim, frame({ timeMs: 0 }));
+    updateGuardSimulation(sim, frame({ timeMs: 16, arrived: true }));
+
+    const resumed = updateGuardSimulation(
+      sim,
+      frame({ timeMs: 16 + PATROL_PAUSE_MS, arrived: true }),
+    );
+
+    expect(resumed.patrolPaused).toBe(false);
+    expect(resumed.events.map((event) => event.cause)).toEqual(["route-replanned"]);
+    expect(resumed.routeCells).not.toBeNull();
+    expect(resumed.goalCell).toEqual({ x: 2, y: 4 });
+
+    updateGuardSimulation(sim, frame({ timeMs: 718, positionCell: { x: 2, y: 4 } }));
+    const second = updateGuardSimulation(
+      sim,
+      frame({ timeMs: 734, positionCell: { x: 2, y: 4 }, arrived: true }),
+    );
+
+    expect(second.patrolPaused).toBe(true);
+    expect(second.patrolGazeCell).toEqual({ x: 27, y: 4 });
+  });
+
+  it("resumes by accumulated time regardless of the frame cadence", () => {
+    const coarse = pausedSimulation();
+    updateGuardSimulation(coarse, frame({ timeMs: 0 }));
+    const coarseArrival = updateGuardSimulation(coarse, frame({ timeMs: 16, arrived: true }));
+    expect(coarseArrival.patrolPaused).toBe(true);
+
+    const coarseResumed = updateGuardSimulation(
+      coarse,
+      frame({ timeMs: 16 + PATROL_PAUSE_MS, arrived: true }),
+    );
+    expect(coarseResumed.patrolPaused).toBe(false);
+    expect(coarseResumed.goalCell).toEqual({ x: 2, y: 4 });
+
+    const fine = pausedSimulation();
+    updateGuardSimulation(fine, frame({ timeMs: 0 }));
+    updateGuardSimulation(fine, frame({ timeMs: 16, arrived: true }));
+    for (let step = 1; step < PATROL_PAUSE_MS; step += 1) {
+      const pending = updateGuardSimulation(
+        fine,
+        frame({ timeMs: 16 + step, arrived: true }),
+      );
+      expect(pending.patrolPaused).toBe(true);
+    }
+    const fineResumed = updateGuardSimulation(
+      fine,
+      frame({ timeMs: 16 + PATROL_PAUSE_MS, arrived: true }),
+    );
+    expect(fineResumed.patrolPaused).toBe(false);
+    expect(fineResumed.goalCell).toEqual({ x: 2, y: 4 });
+  });
+
+  it("lets a valid vision transition interrupt the pause", () => {
+    const sim = pausedSimulation();
+    updateGuardSimulation(sim, frame({ timeMs: 0 }));
+    const paused = updateGuardSimulation(sim, frame({ timeMs: 16, arrived: true }));
+    expect(paused.patrolPaused).toBe(true);
+
+    const memory = visionMemoryAt({ x: 20, y: 18 });
+    const seen = updateGuardSimulation(
+      sim,
+      frame({ timeMs: 32, arrived: true, visionVisible: true, memory }),
+    );
+
+    expect(seen.state).toBe("pursue");
+    expect(seen.patrolPaused).toBe(false);
+    expect(seen.patrolGazeCell).toBeNull();
+    expect(seen.goalCell).toEqual({ x: 20, y: 18 });
+    expect(seen.events.map((event) => event.cause)).toEqual([
+      "vision-acquired",
+      "route-replanned",
+    ]);
+  });
+
+  it("keeps the pre-existing patrol behavior when the pause is not configured", () => {
+    const sim = createGuardSimulation(LAB_MAP, PATROL_POINTS, GUARD_START);
+    updateGuardSimulation(sim, frame({ timeMs: 0 }));
+    const arrival = updateGuardSimulation(sim, frame({ timeMs: 16, arrived: true }));
+
+    expect(arrival.patrolPaused).toBe(false);
+    expect(arrival.patrolGazeCell).toBeNull();
+    expect(arrival.events.map((event) => event.cause)).toEqual([
+      "arrived",
+      "patrol-point-selected",
+      "route-replanned",
+    ]);
+    expect(arrival.goalCell).toEqual({ x: 2, y: 4 });
   });
 });
