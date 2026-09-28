@@ -4,7 +4,7 @@ titulo: Hitos del laboratorio Guardia de Sigilo
 tipo: referencia
 audiencia: estudiante
 acceso: publico
-version: 7
+version: 8
 ---
 
 # Hitos del laboratorio
@@ -22,6 +22,7 @@ version: 7
 | U2. Cono de visión visible y reactivo | Completado |
 | U3. Animaciones por estado y transición | Completado |
 | U6. Cobertura y ruptura de línea de visión | Completado |
+| U8. Medidor de alerta y estados del nivel | Completado |
 
 ## H0. Base reproducible
 
@@ -142,5 +143,15 @@ Evidencia U3: `docs/u3-animaciones-estados-espec.md` (especificación) y `docs/e
 - Sin cambios de FSM, percepción, memoria, navegación, mapa, patrulla, U1, U2 ni U3.
 
 Evidencia U6: `docs/u6-cobertura-los-espec.md` (especificación) y `docs/evidencias/u6-validacion.md` (validación y revisión del diff).
+
+## U8. Medidor de alerta y estados del nivel
+
+- Nivel de alerta 0–100 derivado sólo de la FSM real y la visión: `pursue`/visión → 100, `search` → 80, `investigate` → 70, `return` → 40, `patrol` → 0; ascenso 0.25/ms (0→100 en 400 ms) y descenso 0.08/ms (100→0 en 1250 ms).
+- Reducer puro Phaser-free (`src/game/visual/alertMeter.ts`) con clamp, partición-independiente y sin timers; el HUD sólo redibuja por fotograma.
+- Barra dedicada centrada arriba con 4 bandas de peligro (`calma/sospecha/alerta/critico`) usando la paleta existente (slate → celeste → ámbar → rojo) y pulso en `critico`.
+- No es una segunda FSM: se leen `outcome.state` y `frame.vision.visible`; cobertura/oclusión influye porque la FSM la expresa (investigate/search → alerta alta), sin modificar U6.
+- Sin cambios de FSM, percepción, memoria, navegación, mapa, patrulla, U1, U2, U3 ni U6.
+
+Evidencia U8: `docs/u8-alerta-espec.md` (especificación) y `docs/evidencias/u8-validacion.md` (validación y revisión del diff).
 
 Cada hito debe poder validarse de forma independiente. No se avanza ocultando fallos del anterior.

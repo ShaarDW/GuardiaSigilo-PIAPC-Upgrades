@@ -48,6 +48,13 @@ import {
   resolveCover,
   type CoverState,
 } from "../visual/coverState";
+import {
+  alertBand,
+  ALERT_MAX,
+  resolveAlert,
+  type AlertBand,
+  type AlertMeterState,
+} from "../visual/alertMeter";
 
 const PLAYER_SPEED = 190;
 const GUARD_SPEED = 115;
@@ -86,6 +93,22 @@ const COVER_LABELS: Readonly<Record<CoverState, string>> = {
 };
 const COVER_FRAME_COLOR = 0xb9a7ff;
 
+const ALERT_METER_WIDTH = 120;
+const ALERT_METER_HEIGHT = 8;
+const ALERT_METER_Y = 14;
+const ALERT_BAND_LABELS: Readonly<Record<AlertBand, string>> = {
+  calma: "CALMA",
+  sospecha: "SOSPECHA",
+  alerta: "ALERTA",
+  critico: "CRITICO",
+};
+const ALERT_BAND_COLORS: Readonly<Record<AlertBand, number>> = {
+  calma: 0x9eb4c2,
+  sospecha: 0x62d0e8,
+  alerta: 0xe5b454,
+  critico: 0xe16969,
+};
+
 export class GameScene extends Phaser.Scene {
   private player!: Phaser.GameObjects.Rectangle;
   private playerBody!: Phaser.Physics.Arcade.Body;
@@ -101,6 +124,8 @@ export class GameScene extends Phaser.Scene {
   private navigationGraphics!: Phaser.GameObjects.Graphics;
   private perceptionGraphics!: Phaser.GameObjects.Graphics;
   private guardFxGraphics!: Phaser.GameObjects.Graphics;
+  private alertMeterGraphics!: Phaser.GameObjects.Graphics;
+  private alertMeterLabel!: Phaser.GameObjects.Text;
   private lastKnownMarker!: Phaser.GameObjects.Arc;
   private navigationHud!: Phaser.GameObjects.Text;
   private telemetryHud!: Phaser.GameObjects.Text;
@@ -114,6 +139,7 @@ export class GameScene extends Phaser.Scene {
   private guardEffectState: GuardEffectState = emptyGuardEffectState();
   private guardCover: CoverState = "expuesto";
   private coverStartMs: number | null = null;
+  private alertMeterState: AlertMeterState | null = null;
   private telemetryVisible = false;
   private perceptionState: PerceptionSimulationState = initialPerceptionState();
   private guardSession!: GuardSimulation;
@@ -133,6 +159,7 @@ export class GameScene extends Phaser.Scene {
     this.guardEffectState = emptyGuardEffectState();
     this.guardCover = "expuesto";
     this.coverStartMs = null;
+    this.alertMeterState = null;
     this.telemetryVisible = false;
     this.perceptionState = initialPerceptionState();
     this.guardSession = createGuardSimulation(LAB_MAP, PATROL_POINTS, GUARD_START, {
@@ -220,6 +247,16 @@ export class GameScene extends Phaser.Scene {
         padding: { x: 8, y: 6 },
       })
       .setOrigin(0, 1)
+      .setDepth(10);
+
+    this.alertMeterGraphics = this.add.graphics().setDepth(10);
+    this.alertMeterLabel = this.add
+      .text(0, 0, "", {
+        fontFamily: "monospace",
+        fontSize: "12px",
+        color: "#9eb4c2",
+      })
+      .setOrigin(0, 0)
       .setDepth(10);
 
     this.stepGuard(0, 0);
@@ -327,6 +364,45 @@ export class GameScene extends Phaser.Scene {
     this.drawNavigation(outcome);
     this.drawPerception(this.resolveVisionFeedbackState(frame.vision.visible, time));
     this.updateTelemetry(time, frame.vision, frame.soundHeard, outcome, this.guardCover);
+
+    this.alertMeterState = resolveAlert(
+      this.alertMeterState,
+      { state: outcome.state, visionVisible: frame.vision.visible },
+      time,
+    );
+    this.drawAlertMeter(time);
+  }
+
+  private drawAlertMeter(time: number): void {
+    const value = this.alertMeterState === null ? 0 : this.alertMeterState.value;
+    const band = alertBand(value);
+    const color = ALERT_BAND_COLORS[band];
+    const left = (GRID_WIDTH * TILE_SIZE - ALERT_METER_WIDTH) / 2;
+    const fraction = Math.min(1, Math.max(0, value / ALERT_MAX));
+
+    this.alertMeterGraphics.clear();
+    this.alertMeterGraphics.fillStyle(0x0b1116, 0.85);
+    this.alertMeterGraphics.fillRect(left, ALERT_METER_Y, ALERT_METER_WIDTH, ALERT_METER_HEIGHT);
+    if (fraction > 0) {
+      const alpha = band === "critico"
+        ? 0.55 + 0.4 * pulsePhase(time, 400)
+        : 0.95;
+      this.alertMeterGraphics.fillStyle(color, alpha);
+      this.alertMeterGraphics.fillRect(
+        left,
+        ALERT_METER_Y,
+        ALERT_METER_WIDTH * fraction,
+        ALERT_METER_HEIGHT,
+      );
+    }
+    this.alertMeterGraphics.lineStyle(1, color, 0.6);
+    this.alertMeterGraphics.strokeRect(left, ALERT_METER_Y, ALERT_METER_WIDTH, ALERT_METER_HEIGHT);
+
+    const hex = `#${color.toString(16).padStart(6, "0")}`;
+    this.alertMeterLabel
+      .setText(`ALERT ${ALERT_BAND_LABELS[band]} ${Math.round(value)}`)
+      .setPosition(left + ALERT_METER_WIDTH + 8, ALERT_METER_Y - 2)
+      .setColor(hex);
   }
 
   private applyPatrolGazeSweep(time: number): void {
