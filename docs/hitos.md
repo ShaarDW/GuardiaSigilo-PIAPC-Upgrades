@@ -4,7 +4,7 @@ titulo: Hitos del laboratorio Guardia de Sigilo
 tipo: referencia
 audiencia: estudiante
 acceso: publico
-version: 6
+version: 7
 ---
 
 # Hitos del laboratorio
@@ -21,6 +21,7 @@ version: 6
 | U1. Patrulla con pausas y mirada direccional | Completado |
 | U2. Cono de visión visible y reactivo | Completado |
 | U3. Animaciones por estado y transición | Completado |
+| U6. Cobertura y ruptura de línea de visión | Completado |
 
 ## H0. Base reproducible
 
@@ -132,5 +133,14 @@ Evidencia U2: `docs/u2-cono-vision-espec.md` (especificación) y `docs/evidencia
 - Sin cambios de FSM, percepción, memoria, navegación, mapa, patrulla, velocidades ni parámetros de gameplay.
 
 Evidencia U3: `docs/u3-animaciones-estados-espec.md` (especificación) y `docs/evidencias/u3-validacion.md` (validación y revisión del diff).
+
+## U6. Cobertura y ruptura de línea de visión
+
+- La ruptura de línea de visión por oclusión se construye sobre la transición existente: percepción deja de confirmar (`reason=occluded`), memoria/LKP congelado, gracia de 200 ms, `PURSUE → INVESTIGATE (LKP) → SEARCH` y re-persecución sólo al volver a ser visible — sin reglas FSM nuevas.
+- El invariante `confirmsSight(reason)` (sólo `visible` confirma) queda en una función pura Phaser-free (`src/game/visual/coverState.ts`) con `resolveCover` y `coverFlash` (350 ms).
+- Feedback mínimo derivado de datos reales: línea HUD `cobertura` (`VISIBLE | CUBIERTO | EXPUESTO`) y marco breve en `guardFxGraphics` al entrar en cobertura.
+- Sin cambios de FSM, percepción, memoria, navegación, mapa, patrulla, U1, U2 ni U3.
+
+Evidencia U6: `docs/u6-cobertura-los-espec.md` (especificación) y `docs/evidencias/u6-validacion.md` (validación y revisión del diff).
 
 Cada hito debe poder validarse de forma independiente. No se avanza ocultando fallos del anterior.

@@ -43,6 +43,11 @@ import {
   updateGuardEffect,
   type GuardEffectState,
 } from "../visual/guardPresentation";
+import {
+  coverFlash,
+  resolveCover,
+  type CoverState,
+} from "../visual/coverState";
 
 const PLAYER_SPEED = 190;
 const GUARD_SPEED = 115;
@@ -74,6 +79,12 @@ const VISION_FEEDBACK_STYLES: Readonly<Record<
   grace: { fill: 0xe5b454, stroke: 0xffd98a, alpha: 0.16 },
   detection: { fill: 0x73c991, stroke: 0xd7f5e0, alpha: 0.22 },
 };
+const COVER_LABELS: Readonly<Record<CoverState, string>> = {
+  visible: "VISIBLE",
+  cubierto: "CUBIERTO",
+  expuesto: "EXPUESTO",
+};
+const COVER_FRAME_COLOR = 0xb9a7ff;
 
 export class GameScene extends Phaser.Scene {
   private player!: Phaser.GameObjects.Rectangle;
@@ -101,6 +112,8 @@ export class GameScene extends Phaser.Scene {
   private patrolPauseStartedAtMs: number | null = null;
   private patrolPauseBaseAngle = 0;
   private guardEffectState: GuardEffectState = emptyGuardEffectState();
+  private guardCover: CoverState = "expuesto";
+  private coverStartMs: number | null = null;
   private telemetryVisible = false;
   private perceptionState: PerceptionSimulationState = initialPerceptionState();
   private guardSession!: GuardSimulation;
@@ -118,6 +131,8 @@ export class GameScene extends Phaser.Scene {
     this.patrolPauseStartedAtMs = null;
     this.patrolPauseBaseAngle = 0;
     this.guardEffectState = emptyGuardEffectState();
+    this.guardCover = "expuesto";
+    this.coverStartMs = null;
     this.telemetryVisible = false;
     this.perceptionState = initialPerceptionState();
     this.guardSession = createGuardSimulation(LAB_MAP, PATROL_POINTS, GUARD_START, {
@@ -259,6 +274,17 @@ export class GameScene extends Phaser.Scene {
     });
     this.perceptionState = frame.state;
 
+    const cover = resolveCover(frame.vision.visible, frame.vision.reason);
+    this.guardCover = cover;
+    if (cover === "cubierto") {
+      if (this.coverStartMs === null) {
+        this.coverStartMs = time;
+      }
+    } else {
+      this.coverStartMs = null;
+    }
+    const coverFlashIntensity = coverFlash(cover, this.coverStartMs ?? time, time);
+
     const outcome = updateGuardSimulation(this.guardSession, {
       timeMs: time,
       positionCell: worldToCell(observer, TILE_SIZE),
@@ -297,10 +323,10 @@ export class GameScene extends Phaser.Scene {
 
     this.trackPatrolPause(outcome, time);
 
-    this.updateGuardPresentation(time, outcome, moved);
+    this.updateGuardPresentation(time, outcome, moved, coverFlashIntensity);
     this.drawNavigation(outcome);
     this.drawPerception(this.resolveVisionFeedbackState(frame.vision.visible, time));
-    this.updateTelemetry(time, frame.vision, frame.soundHeard, outcome);
+    this.updateTelemetry(time, frame.vision, frame.soundHeard, outcome, this.guardCover);
   }
 
   private applyPatrolGazeSweep(time: number): void {
@@ -332,7 +358,12 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private updateGuardPresentation(time: number, outcome: GuardFrameOutput, moving: boolean): void {
+  private updateGuardPresentation(
+    time: number,
+    outcome: GuardFrameOutput,
+    moving: boolean,
+    coverFlashIntensity: number,
+  ): void {
     const presentation = guardStatePresentation(outcome.state);
     this.guardEffectState = updateGuardEffect(this.guardEffectState, outcome.events, time);
     const motion = motionVisual(moving, outcome.state);
@@ -391,6 +422,26 @@ export class GameScene extends Phaser.Scene {
         -forwardX * tailEnd,
         -forwardY * tailEnd,
       );
+    }
+
+    if (coverFlashIntensity > 0) {
+      const half = 18;
+      const corner = 7;
+      this.guardFxGraphics.lineStyle(2, COVER_FRAME_COLOR, coverFlashIntensity);
+      this.guardFxGraphics.beginPath();
+      this.guardFxGraphics.moveTo(-half, -half + corner);
+      this.guardFxGraphics.lineTo(-half, -half);
+      this.guardFxGraphics.lineTo(-half + corner, -half);
+      this.guardFxGraphics.moveTo(half - corner, -half);
+      this.guardFxGraphics.lineTo(half, -half);
+      this.guardFxGraphics.lineTo(half, -half + corner);
+      this.guardFxGraphics.moveTo(half, half - corner);
+      this.guardFxGraphics.lineTo(half, half);
+      this.guardFxGraphics.lineTo(half - corner, half);
+      this.guardFxGraphics.moveTo(-half + corner, half);
+      this.guardFxGraphics.lineTo(-half, half);
+      this.guardFxGraphics.lineTo(-half, half - corner);
+      this.guardFxGraphics.strokePath();
     }
   }
 
@@ -554,6 +605,7 @@ export class GameScene extends Phaser.Scene {
     vision: VisionResult,
     soundHeard: boolean,
     outcome: GuardFrameOutput,
+    cover: CoverState,
   ): void {
     const age = timeSinceLastPerception(this.perceptionState.memory, time);
     const memory = age === null
@@ -590,6 +642,7 @@ export class GameScene extends Phaser.Scene {
       nav,
       lastLine,
       `vision ${VISION_LABELS[vision.reason]}`,
+      `cobertura ${COVER_LABELS[cover]}`,
       `sonido ${sound}`,
       memory,
     ]);

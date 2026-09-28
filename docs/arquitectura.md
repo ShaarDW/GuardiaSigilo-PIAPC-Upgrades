@@ -4,7 +4,7 @@ titulo: Arquitectura del laboratorio Guardia de Sigilo
 tipo: referencia
 audiencia: estudiante
 acceso: publico
-version: 3
+version: 4
 ---
 
 # Arquitectura propuesta
@@ -86,6 +86,8 @@ Entrada sonora: posición del oyente y evento con origen, radio, instante y dura
 Salida: resultado y causa observable; no modifica directamente el estado de conducta. `src/domain/perception/memory.ts` conserva sólo observaciones finitas provistas por sensores validados y prioriza visión ante eventos simultáneos. `src/application/simulation/perceptionSimulation.ts` coordina sensores, vigencia del sonido y memoria; Phaser sólo adapta tiempo, entrada y representación.
 
 La representación visual del cono (`GameScene.drawPerception`) consume la salida real de percepción y la memoria, sin segunda lógica de detección: `src/game/visual/visionFeedback.ts` expone la función pura `resolveVisionFeedback` (estado `normal`/`detection`/`grace` a partir de `VisionResult.visible`, la antigüedad de la última observación de visión y la constante real `VISION_LOST_GRACE_MS` de `guardState.ts`) y `visionSector(facing, fieldOfViewRadians)` para la geometría del sector con los mismos parámetros `VISION_RANGE` y `FIELD_OF_VIEW`. Durante la gracia (último avistamiento con menos de 200 ms) el cono se muestra ámbar; con detección válida, verde reforzado; en el resto, azul. La oclusión real se comunica por el color reactivo (un objetivo ocluido nunca produce `detection`); no se reimplementa line-of-sight para dibujar.
+
+La cobertura (ruptura de línea de visión por oclusión) es otra capa presentacional derivada, no una fuente de verdad: `src/game/visual/coverState.ts` es una librería Phaser-free que interpreta el `VisibilityReason` real (`confirmsSight(reason)` devuelve `true` sólo para `"visible"`; `resolveCover(visible, reason)` produce `"visible" | "cubierto" | "expuesto"`) y genera el destello breve del marco (`coverFlash`, triángulo acotado de 350 ms, frame-driven). `GameScene` fija `coverStartMs` sólo en el flanco ascendente de `"cubierto"`, muestra la línea `cobertura` en el HUD a partir del mismo estado y dibuja el marco en `guardFxGraphics` (depth 4). No modifica la FSM, la percepción, la memoria ni la navegación: la cadena `PURSUE → INVESTIGATE → SEARCH` comprometida al LKP y la re-persecución sólo por visión real ya las garantiza `guardState.ts`/`guardSimulation.ts`.
 
 ### Movimiento
 

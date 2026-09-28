@@ -11,11 +11,18 @@ import {
   type GuardFrameInput,
 } from "../../src/application/simulation/guardSimulation";
 import {
+  initialPerceptionState,
+  updatePerceptionSimulation,
+  type PerceptionFrame,
+  type PerceptionSimulationState,
+} from "../../src/application/simulation/perceptionSimulation";
+import {
   GUARD_START,
   LAB_MAP,
   PATROL_POINTS,
   TILE_SIZE,
 } from "../../src/application/simulation/labLevel";
+import type { Vector2 } from "../../src/domain/model/vector";
 
 function frame(overrides: Partial<GuardFrameInput> = {}): GuardFrameInput {
   return {
@@ -825,5 +832,138 @@ describe("guard patrol pause during Upgrade 1", () => {
       "route-replanned",
     ]);
     expect(arrival.goalCell).toEqual({ x: 2, y: 4 });
+  });
+});
+
+describe("guard simulation cover break chain (U6)", () => {
+  const RANGE = 500;
+  const FOV = Math.PI / 2;
+  const guardCell = { x: 0, y: 0 };
+  const playerStart = { x: 1, y: 0 };
+  const playerCovered = { x: 4, y: 0 };
+  const playerVisible = { x: 0, y: 4 };
+
+  function coverMap(): ReturnType<typeof createGridMap> {
+    return createGridMap(6, 5, [{ x: 3, y: 0 }]);
+  }
+
+  function perceive(
+    state: PerceptionSimulationState,
+    playerCell: { x: number; y: number },
+    facing: Vector2,
+    timeMs: number,
+  ): PerceptionFrame {
+    return updatePerceptionSimulation(state, {
+      map: coverMap(),
+      tileSize: TILE_SIZE,
+      observer: cellCenter(guardCell, TILE_SIZE),
+      facing,
+      target: cellCenter(playerCell, TILE_SIZE),
+      visionRange: RANGE,
+      fieldOfViewRadians: FOV,
+      timeMs,
+    });
+  }
+
+  it("PURSUE -> occluded break -> grace -> INVESTIGATE(LKP) -> SEARCH -> re-acquire -> PURSUE", () => {
+    const sim = createGuardSimulation(coverMap(), [{ x: 0, y: 4 }], guardCell);
+    let perception = initialPerceptionState();
+
+    const first = perceive(perception, playerStart, { x: 1, y: 0 }, 0);
+    perception = first.state;
+    expect(first.vision.visible).toBe(true);
+    const acquired = updateGuardSimulation(sim, {
+      timeMs: 0,
+      positionCell: guardCell,
+      arrived: false,
+      visionVisible: first.vision.visible,
+      soundHeard: first.soundHeard,
+      memory: first.state.memory,
+    });
+    expect(acquired.state).toBe("pursue");
+
+    const occludedEarly = perceive(perception, playerCovered, { x: 1, y: 0 }, 100);
+    perception = occludedEarly.state;
+    expect(occludedEarly.vision.reason).toBe("occluded");
+    expect(occludedEarly.vision.visible).toBe(false);
+    expect(occludedEarly.state.memory.lastKnownPosition).toEqual(
+      cellCenter(playerStart, TILE_SIZE),
+    );
+    const withinGrace = updateGuardSimulation(sim, {
+      timeMs: 100,
+      positionCell: guardCell,
+      arrived: false,
+      visionVisible: false,
+      soundHeard: false,
+      memory: occludedEarly.state.memory,
+    });
+    expect(withinGrace.state).toBe("pursue");
+
+    const occludedAfterGrace = perceive(perception, playerCovered, { x: 1, y: 0 }, 200);
+    perception = occludedAfterGrace.state;
+    expect(occludedAfterGrace.vision.reason).toBe("occluded");
+    expect(occludedAfterGrace.state.memory.lastPerceivedAtMs).toBe(0);
+    const lost = updateGuardSimulation(sim, {
+      timeMs: 200,
+      positionCell: guardCell,
+      arrived: false,
+      visionVisible: false,
+      soundHeard: false,
+      memory: occludedAfterGrace.state.memory,
+    });
+    expect(lost.state).toBe("investigate");
+    expect(lost.goalCell).toEqual(playerStart);
+    expect(lost.events.map((event) => event.cause)).toEqual(["vision-lost", "retargeted"]);
+
+    const occludedAtArrival = perceive(perception, playerCovered, { x: 1, y: 0 }, 300);
+    perception = occludedAtArrival.state;
+    const searching = updateGuardSimulation(sim, {
+      timeMs: 300,
+      positionCell: playerStart,
+      arrived: true,
+      visionVisible: false,
+      soundHeard: false,
+      memory: occludedAtArrival.state.memory,
+    });
+    expect(searching.state).toBe("search");
+    expect(searching.events.map((event) => event.cause)).toEqual([
+      "investigate-arrived",
+      "search-started",
+    ]);
+    expect(occludedAtArrival.state.memory.lastKnownPosition).toEqual(
+      cellCenter(playerStart, TILE_SIZE),
+    );
+
+    const stillOccluded = perceive(perception, playerCovered, { x: 1, y: 0 }, 350);
+    perception = stillOccluded.state;
+    const notReacquired = updateGuardSimulation(sim, {
+      timeMs: 350,
+      positionCell: playerStart,
+      arrived: false,
+      visionVisible: false,
+      soundHeard: false,
+      memory: stillOccluded.state.memory,
+    });
+    expect(notReacquired.state).toBe("search");
+    expect(notReacquired.events).toEqual([]);
+
+    const reacquired = perceive(perception, playerVisible, { x: 0, y: 1 }, 450);
+    perception = reacquired.state;
+    expect(reacquired.vision.visible).toBe(true);
+    expect(reacquired.state.memory.lastKnownPosition).toEqual(cellCenter(playerVisible, TILE_SIZE));
+    const chasing = updateGuardSimulation(sim, {
+      timeMs: 450,
+      positionCell: playerStart,
+      arrived: false,
+      visionVisible: true,
+      soundHeard: false,
+      memory: reacquired.state.memory,
+    });
+    expect(chasing.state).toBe("pursue");
+    expect(chasing.goalCell).toEqual(playerVisible);
+    expect(chasing.events.map((event) => event.cause)).toEqual([
+      "vision-acquired",
+      "route-replanned",
+    ]);
   });
 });
