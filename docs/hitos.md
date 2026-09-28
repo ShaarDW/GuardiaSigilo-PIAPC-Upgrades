@@ -4,7 +4,7 @@ titulo: Hitos del laboratorio Guardia de Sigilo
 tipo: referencia
 audiencia: estudiante
 acceso: publico
-version: 4
+version: 5
 ---
 
 # Hitos del laboratorio
@@ -19,6 +19,7 @@ version: 4
 | H5. Comparación | Completado |
 | H6. Integración final | Completado |
 | U1. Patrulla con pausas y mirada direccional | Completado |
+| U2. Cono de visión visible y reactivo | Completado |
 
 ## H0. Base reproducible
 
@@ -111,5 +112,14 @@ Evidencia H6: `docs/evidencias/h6-integracion.md` (línea de reconstrucción, va
 - Sin cambios de FSM, percepción, memoria, navegación, mapa ni puntos de patrulla.
 
 Evidencia U1: `docs/u1-patrulla-pausas-espec.md` (especificación) y `docs/evidencias/u1-validacion.md` (validación y revisión del diff).
+
+## U2. Cono de visión visible y reactivo
+
+- Cono visible con contorno que sigue la orientación del guardia (incluido el barrido U1).
+- Tres estados reactivos derivados del estado real de percepción: `detection` (verde), `grace` (ámbar, dentro de `VISION_LOST_GRACE_MS`) y `normal` (azul).
+- Lógica de estado como función pura (`src/game/visual/visionFeedback.ts`), sin segunda detección.
+- Sin cambios de FSM, percepción, memoria, navegación, mapa, patrulla ni simulación de guardia.
+
+Evidencia U2: `docs/u2-cono-vision-espec.md` (especificación) y `docs/evidencias/u2-validacion.md` (validación y revisión del diff).
 
 Cada hito debe poder validarse de forma independiente. No se avanza ocultando fallos del anterior.

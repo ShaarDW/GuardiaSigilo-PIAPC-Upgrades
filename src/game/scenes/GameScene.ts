@@ -24,9 +24,14 @@ import {
 import { cellCenter, isWalkable, worldToCell } from "../../domain/model/grid";
 import type { Vector2 } from "../../domain/model/vector";
 import { advanceAlongPath } from "../../domain/navigation/pathFollower";
-import type { GuardState } from "../../domain/behavior/guardState";
+import { VISION_LOST_GRACE_MS, type GuardState } from "../../domain/behavior/guardState";
 import { timeSinceLastPerception } from "../../domain/perception/memory";
 import type { VisionReason, VisionResult } from "../../domain/perception/perception";
+import {
+  resolveVisionFeedback,
+  visionSector,
+  type VisionFeedbackState,
+} from "../visual/visionFeedback";
 
 const PLAYER_SPEED = 190;
 const GUARD_SPEED = 115;
@@ -48,6 +53,15 @@ const VISION_LABELS: Readonly<Record<VisionReason, string>> = {
   "outside-cone": "FUERA DEL CONO",
   occluded: "OCLUIDO",
   "invalid-facing": "DIRECCION INVALIDA",
+};
+
+const VISION_FEEDBACK_STYLES: Readonly<Record<
+  VisionFeedbackState,
+  { readonly fill: number; readonly stroke: number; readonly alpha: number }
+>> = {
+  normal: { fill: 0x6b8afd, stroke: 0x9eb4c2, alpha: 0.16 },
+  grace: { fill: 0xe5b454, stroke: 0xffd98a, alpha: 0.16 },
+  detection: { fill: 0x73c991, stroke: 0xd7f5e0, alpha: 0.22 },
 };
 
 export class GameScene extends Phaser.Scene {
@@ -267,7 +281,7 @@ export class GameScene extends Phaser.Scene {
     this.trackPatrolPause(outcome, time);
 
     this.drawNavigation(outcome);
-    this.drawPerception(frame.vision);
+    this.drawPerception(this.resolveVisionFeedbackState(frame.vision.visible, time));
     this.updateTelemetry(time, frame.vision, frame.soundHeard, outcome);
   }
 
@@ -387,22 +401,57 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private drawPerception(vision: VisionResult): void {
+  private resolveVisionFeedbackState(visible: boolean, time: number): VisionFeedbackState {
+    const memory = this.perceptionState.memory;
+    const lastVisionAgeMs = memory.source === "vision"
+      ? timeSinceLastPerception(memory, time)
+      : null;
+    return resolveVisionFeedback({
+      visible,
+      lastVisionAgeMs,
+      graceMs: VISION_LOST_GRACE_MS,
+    });
+  }
+
+  private drawPerception(feedback: VisionFeedbackState): void {
     this.perceptionGraphics.clear();
-    const facingAngle = Math.atan2(this.guardFacing.y, this.guardFacing.x);
-    const halfFieldOfView = FIELD_OF_VIEW / 2;
-    this.perceptionGraphics.fillStyle(vision.visible ? 0x73c991 : 0x6b8afd, 0.16);
+    const sector = visionSector(this.guardFacing, FIELD_OF_VIEW);
+    const style = VISION_FEEDBACK_STYLES[feedback];
+    this.perceptionGraphics.fillStyle(style.fill, style.alpha);
     this.perceptionGraphics.beginPath();
     this.perceptionGraphics.moveTo(this.guard.x, this.guard.y);
     this.perceptionGraphics.arc(
       this.guard.x,
       this.guard.y,
       VISION_RANGE,
-      facingAngle - halfFieldOfView,
-      facingAngle + halfFieldOfView,
+      sector.startAngle,
+      sector.endAngle,
     );
     this.perceptionGraphics.closePath();
     this.perceptionGraphics.fillPath();
+
+    this.perceptionGraphics.lineStyle(feedback === "detection" ? 2 : 1, style.stroke, 0.7);
+    this.perceptionGraphics.beginPath();
+    this.perceptionGraphics.arc(
+      this.guard.x,
+      this.guard.y,
+      VISION_RANGE,
+      sector.startAngle,
+      sector.endAngle,
+    );
+    this.perceptionGraphics.strokePath();
+    this.perceptionGraphics.beginPath();
+    this.perceptionGraphics.moveTo(this.guard.x, this.guard.y);
+    this.perceptionGraphics.lineTo(
+      this.guard.x + Math.cos(sector.startAngle) * VISION_RANGE,
+      this.guard.y + Math.sin(sector.startAngle) * VISION_RANGE,
+    );
+    this.perceptionGraphics.moveTo(this.guard.x, this.guard.y);
+    this.perceptionGraphics.lineTo(
+      this.guard.x + Math.cos(sector.endAngle) * VISION_RANGE,
+      this.guard.y + Math.sin(sector.endAngle) * VISION_RANGE,
+    );
+    this.perceptionGraphics.strokePath();
 
     if (this.perceptionState.soundEvent) {
       this.perceptionGraphics.lineStyle(2, 0xe5b454, 0.8);

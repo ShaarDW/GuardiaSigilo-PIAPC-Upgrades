@@ -4,7 +4,7 @@ titulo: Laboratorio Guardia de Sigilo
 tipo: indice
 audiencia: estudiante
 acceso: publico
-version: 4
+version: 5
 ---
 
 # Laboratorio Guardia de Sigilo
@@ -13,7 +13,7 @@ Proyecto canónico de PIAPC 2026 para aplicar desarrollo agéntico e inteligenci
 
 ## Estado
 
-H0 a H6 implementados: escenario base, repositorio preparado para agentes, navegación BFS/A*, percepción con memoria, máquina de estados del guardia (PATROL, INVESTIGATE, PURSUE, SEARCH y RETURN), comparación de arquitecturas y cierre de la integración final. Upgrade 1 implementado: la patrulla se detiene brevemente (`PATROL_PAUSE_MS`) en cada punto, barre la mirada 360° a su alrededor y continúa, sin alterar la FSM ni la navegación.
+H0 a H6 implementados: escenario base, repositorio preparado para agentes, navegación BFS/A*, percepción con memoria, máquina de estados del guardia (PATROL, INVESTIGATE, PURSUE, SEARCH y RETURN), comparación de arquitecturas y cierre de la integración final. Upgrade 1 implementado: la patrulla se detiene brevemente (`PATROL_PAUSE_MS`) en cada punto, barre la mirada 360° a su alrededor y continúa, sin alterar la FSM ni la navegación. Upgrade 2 implementado: el cono de visión es visible con contorno y reacciona al estado real de percepción en tres estados (detección, gracia de 200 ms y normal), sin segunda lógica de detección.
 
 ## Ejecución
 
@@ -72,6 +72,8 @@ El proyecto no busca producir un videojuego comercial. Es un entorno de experime
 - [Integración final H6](docs/evidencias/h6-integracion.md)
 - [U1: patrulla con pausas y mirada direccional](docs/u1-patrulla-pausas-espec.md)
 - [Validación U1](docs/evidencias/u1-validacion.md)
+- [U2: cono de visión visible y reactivo](docs/u2-cono-vision-espec.md)
+- [Validación U2](docs/evidencias/u2-validacion.md)
 
 ## Tecnología de referencia
 

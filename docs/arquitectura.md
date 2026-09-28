@@ -85,6 +85,8 @@ Entrada sonora: posición del oyente y evento con origen, radio, instante y dura
 
 Salida: resultado y causa observable; no modifica directamente el estado de conducta. `src/domain/perception/memory.ts` conserva sólo observaciones finitas provistas por sensores validados y prioriza visión ante eventos simultáneos. `src/application/simulation/perceptionSimulation.ts` coordina sensores, vigencia del sonido y memoria; Phaser sólo adapta tiempo, entrada y representación.
 
+La representación visual del cono (`GameScene.drawPerception`) consume la salida real de percepción y la memoria, sin segunda lógica de detección: `src/game/visual/visionFeedback.ts` expone la función pura `resolveVisionFeedback` (estado `normal`/`detection`/`grace` a partir de `VisionResult.visible`, la antigüedad de la última observación de visión y la constante real `VISION_LOST_GRACE_MS` de `guardState.ts`) y `visionSector(facing, fieldOfViewRadians)` para la geometría del sector con los mismos parámetros `VISION_RANGE` y `FIELD_OF_VIEW`. Durante la gracia (último avistamiento con menos de 200 ms) el cono se muestra ámbar; con detección válida, verde reforzado; en el resto, azul. La oclusión real se comunica por el color reactivo (un objetivo ocluido nunca produce `detection`); no se reimplementa line-of-sight para dibujar.
+
 ### Movimiento
 
 Entrada: posición, puntos de paso, índice siguiente y distancia máxima de avance.
