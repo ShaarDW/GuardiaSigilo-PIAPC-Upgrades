@@ -32,6 +32,17 @@ import {
   visionSector,
   type VisionFeedbackState,
 } from "../visual/visionFeedback";
+import {
+  effectProgress,
+  emptyGuardEffectState,
+  guardFacingAngle,
+  guardStatePresentation,
+  GUARD_SEARCH_SCAN_PERIOD_MS,
+  motionVisual,
+  pulsePhase,
+  updateGuardEffect,
+  type GuardEffectState,
+} from "../visual/guardPresentation";
 
 const PLAYER_SPEED = 190;
 const GUARD_SPEED = 115;
@@ -78,6 +89,7 @@ export class GameScene extends Phaser.Scene {
   private telemetryKey!: Phaser.Input.Keyboard.Key;
   private navigationGraphics!: Phaser.GameObjects.Graphics;
   private perceptionGraphics!: Phaser.GameObjects.Graphics;
+  private guardFxGraphics!: Phaser.GameObjects.Graphics;
   private lastKnownMarker!: Phaser.GameObjects.Arc;
   private navigationHud!: Phaser.GameObjects.Text;
   private telemetryHud!: Phaser.GameObjects.Text;
@@ -88,6 +100,7 @@ export class GameScene extends Phaser.Scene {
   private guardArrived = false;
   private patrolPauseStartedAtMs: number | null = null;
   private patrolPauseBaseAngle = 0;
+  private guardEffectState: GuardEffectState = emptyGuardEffectState();
   private telemetryVisible = false;
   private perceptionState: PerceptionSimulationState = initialPerceptionState();
   private guardSession!: GuardSimulation;
@@ -104,6 +117,7 @@ export class GameScene extends Phaser.Scene {
     this.guardArrived = false;
     this.patrolPauseStartedAtMs = null;
     this.patrolPauseBaseAngle = 0;
+    this.guardEffectState = emptyGuardEffectState();
     this.telemetryVisible = false;
     this.perceptionState = initialPerceptionState();
     this.guardSession = createGuardSimulation(LAB_MAP, PATROL_POINTS, GUARD_START, {
@@ -154,6 +168,7 @@ export class GameScene extends Phaser.Scene {
       .circle(guardPosition.x, guardPosition.y, 11, 0x6b8afd)
       .setStrokeStyle(2, 0xb9c5ff)
       .setDepth(4);
+    this.guardFxGraphics = this.add.graphics().setDepth(4);
     this.lastKnownMarker = this.add
       .circle(0, 0, 7, 0x000000, 0)
       .setStrokeStyle(2, 0xe16969)
@@ -261,6 +276,7 @@ export class GameScene extends Phaser.Scene {
       this.appliedRouteVersion = outcome.routeVersion;
     }
 
+    let moved = false;
     if (this.guardWaypoints.length > 0) {
       const movement = advanceAlongPath(
         { x: this.guard.x, y: this.guard.y },
@@ -273,6 +289,7 @@ export class GameScene extends Phaser.Scene {
       this.guardArrived = movement.completed;
       if (movement.direction) {
         this.guardFacing = movement.direction;
+        moved = true;
       }
     } else {
       this.guardArrived = false;
@@ -280,6 +297,7 @@ export class GameScene extends Phaser.Scene {
 
     this.trackPatrolPause(outcome, time);
 
+    this.updateGuardPresentation(time, outcome, moved);
     this.drawNavigation(outcome);
     this.drawPerception(this.resolveVisionFeedbackState(frame.vision.visible, time));
     this.updateTelemetry(time, frame.vision, frame.soundHeard, outcome);
@@ -311,6 +329,68 @@ export class GameScene extends Phaser.Scene {
       this.patrolPauseBaseAngle = Math.atan2(target.y - this.guard.y, target.x - this.guard.x);
     } else {
       this.patrolPauseBaseAngle = 0;
+    }
+  }
+
+  private updateGuardPresentation(time: number, outcome: GuardFrameOutput, moving: boolean): void {
+    const presentation = guardStatePresentation(outcome.state);
+    this.guardEffectState = updateGuardEffect(this.guardEffectState, outcome.events, time);
+    const motion = motionVisual(moving, outcome.state);
+    const facingAngle = guardFacingAngle(this.guardFacing);
+    const forwardX = Math.cos(facingAngle);
+    const forwardY = Math.sin(facingAngle);
+    const pulsePeriod = presentation.pulsePeriodMs;
+
+    const breath = 1 + 0.03 * Math.sin(2 * Math.PI * pulsePhase(time, pulsePeriod));
+    let pop = 1;
+
+    this.guardFxGraphics.setPosition(this.guard.x, this.guard.y);
+    this.guardFxGraphics.clear();
+
+    const effect = this.guardEffectState.effect;
+    if (effect && this.guardEffectState.startedAtMs !== null) {
+      const progress = effectProgress(time, this.guardEffectState.startedAtMs, effect.durationMs);
+      pop = 1 + 0.12 * (1 - progress);
+      this.guardFxGraphics.lineStyle(2, presentation.accent, 0.75 * (1 - progress));
+      this.guardFxGraphics.strokeCircle(0, 0, 14 + 16 * progress);
+    }
+
+    this.guard.setScale(breath * pop);
+
+    const ringAlpha = 0.35 + 0.3 * Math.sin(2 * Math.PI * pulsePhase(time, pulsePeriod));
+    this.guardFxGraphics.lineStyle(presentation.ringWidth, presentation.accent, ringAlpha);
+    this.guardFxGraphics.strokeCircle(0, 0, 15);
+
+    if (presentation.scanRadius) {
+      const scan = pulsePhase(time, GUARD_SEARCH_SCAN_PERIOD_MS);
+      this.guardFxGraphics.lineStyle(1.5, 0x73c991, 0.6 * (1 - scan * 0.6));
+      this.guardFxGraphics.strokeCircle(0, 0, 6 + 22 * scan);
+    }
+
+    const perpendicularX = -forwardY;
+    const perpendicularY = forwardX;
+    const half = 3.2;
+    this.guardFxGraphics.fillStyle(0xd9e4ea, 0.85);
+    this.guardFxGraphics.fillTriangle(
+      forwardX * 14.5,
+      forwardY * 14.5,
+      forwardX * 3 + perpendicularX * half,
+      forwardY * 3 + perpendicularY * half,
+      forwardX * 3 - perpendicularX * half,
+      forwardY * 3 - perpendicularY * half,
+    );
+
+    if (motion.streak) {
+      const length = 8 + 5 * motion.streakGain;
+      const tailStart = 13;
+      const tailEnd = tailStart + length;
+      this.guardFxGraphics.lineStyle(1.5 + motion.streakGain, presentation.accent, 0.65);
+      this.guardFxGraphics.lineBetween(
+        -forwardX * tailStart,
+        -forwardY * tailStart,
+        -forwardX * tailEnd,
+        -forwardY * tailEnd,
+      );
     }
   }
 

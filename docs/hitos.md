@@ -4,7 +4,7 @@ titulo: Hitos del laboratorio Guardia de Sigilo
 tipo: referencia
 audiencia: estudiante
 acceso: publico
-version: 5
+version: 6
 ---
 
 # Hitos del laboratorio
@@ -20,6 +20,7 @@ version: 5
 | H6. Integración final | Completado |
 | U1. Patrulla con pausas y mirada direccional | Completado |
 | U2. Cono de visión visible y reactivo | Completado |
+| U3. Animaciones por estado y transición | Completado |
 
 ## H0. Base reproducible
 
@@ -121,5 +122,15 @@ Evidencia U1: `docs/u1-patrulla-pausas-espec.md` (especificación) y `docs/evide
 - Sin cambios de FSM, percepción, memoria, navegación, mapa, patrulla ni simulación de guardia.
 
 Evidencia U2: `docs/u2-cono-vision-espec.md` (especificación) y `docs/evidencias/u2-validacion.md` (validación y revisión del diff).
+
+## U3. Animaciones por estado y transición
+
+- Representación distinguible por estado (patrol calmo, investigate atento, pursue urgente, search con escaneo, return calmado) con anillo de acento, notch de orientación y streak sólo con movimiento real.
+- Feedback breve (350 ms, determinista y cancelable) para todas las transiciones reales `from≠to` (reutilizando la telemetría), sin duplicar reglas de la FSM.
+- Sin segunda FSM: el reducer `updateGuardEffect` es presentación pura acotada.
+- Compatible con U1 (pausa sin movimiento visual; notch acompaña el barrido) y U2 (cono intacto).
+- Sin cambios de FSM, percepción, memoria, navegación, mapa, patrulla, velocidades ni parámetros de gameplay.
+
+Evidencia U3: `docs/u3-animaciones-estados-espec.md` (especificación) y `docs/evidencias/u3-validacion.md` (validación y revisión del diff).
 
 Cada hito debe poder validarse de forma independiente. No se avanza ocultando fallos del anterior.
